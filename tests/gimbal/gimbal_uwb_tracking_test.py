@@ -14,6 +14,10 @@ if CODE_DIR not in sys.path:
 from gimbal.gimbal_controller_yaw import GimbalController
 
 
+UWB_DEADBAND_DEG = 0.0
+MAX_CORRECTION_PER_FRAME_DEG = 60.0
+
+
 def parse_uwb_packet(data):
     """
     Expected UWB packet:
@@ -36,6 +40,17 @@ def parse_uwb_packet(data):
     return distance, azimuth, elevation
 
 
+def limit_uwb_correction(uwb_relative_deg):
+    """Apply the tracking deadband and per-frame correction limit."""
+    if abs(uwb_relative_deg) < UWB_DEADBAND_DEG:
+        return 0.0
+
+    return max(
+        -MAX_CORRECTION_PER_FRAME_DEG,
+        min(MAX_CORRECTION_PER_FRAME_DEG, uwb_relative_deg),
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Hardware test: track a moving UWB target with yaw gimbal."
@@ -48,11 +63,6 @@ def main():
         type=float,
         default=0.0,
         help="Initial gimbal command angle in degrees, -90 to 90",
-    )
-    parser.add_argument(
-        "--no-wait",
-        action="store_true",
-        help="Do not wait inside move_by_uwb_relative after each command",
     )
     args = parser.parse_args()
 
@@ -115,19 +125,21 @@ def main():
                     continue
 
                 _distance, uwb_relative_deg, _elevation = parsed
+                correction_deg = limit_uwb_correction(uwb_relative_deg)
                 if not source_printed:
                     print(f"[SOURCE] receiving UWB packets from {addr[0]}:{addr[1]}")
                     source_printed = True
 
                 before_command_deg = gimbal.current_degree
                 gimbal_command_deg = gimbal.move_by_uwb_relative(
-                    uwb_relative_deg,
-                    wait=not args.no_wait,
+                    correction_deg,
+                    wait=False,
                 )
 
                 print(
                     "[TRACK]\n"
                     f"  relative_deg       : {uwb_relative_deg:.2f}\n"
+                    f"  correction_deg     : {correction_deg:.2f}\n"
                     f"  prev_gimbal_deg    : {before_command_deg:.2f}\n"
                     f"  gimbal_command_deg : {gimbal_command_deg:.2f}"
                 )
