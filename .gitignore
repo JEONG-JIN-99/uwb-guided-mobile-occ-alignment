@@ -1,0 +1,62 @@
+# Python cache / build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+/bin/
+/include/
+/lib/
+/lib64
+/share/
+/pyvenv.cfg
+
+# Local configuration / secrets
+.env
+.env.*
+*.local
+
+# Editor / OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Codex/local agent metadata
+.agents/
+.codex/
+.antigravitycli/
+
+# Archives generated from source
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+
+# Experiment/runtime outputs
+result/
+*.log
+
+# Generated plots and captured frames
+tests/*_stats.png
+tests/**/*.png
+tests/**/*.jpg
+tests/**/*.jpeg
+tests/**/*.webp
+
+# External/reference code not included in this repository
+lc29h_gps_rtk_hat_code/
