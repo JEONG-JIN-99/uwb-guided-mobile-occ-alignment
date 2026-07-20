@@ -16,6 +16,10 @@ def main():
     gimbal = GimbalController(yaw_pin=18)
 
     try:
+        gimbal.move_to(90.0)
+        time.sleep(5.0)
+        gimbal.move_to(-90.0)
+        time.sleep(5.0)
         gimbal.move_to(0.0)
         print("0도 정렬")
         time.sleep(1.0)
