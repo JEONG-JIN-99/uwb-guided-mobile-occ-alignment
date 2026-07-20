@@ -1,4 +1,5 @@
 import sys
+import os
 from unittest.mock import MagicMock, patch
 
 # RPi.GPIO 모듈 Mocking (Windows 등 개발 환경 호환성 확보)
@@ -8,7 +9,15 @@ sys.modules['RPi.GPIO'] = MagicMock()
 import unittest
 import math
 
-from gimbal.step_controller import GimbalStepController
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
+CODE_DIR = os.path.join(PROJECT_ROOT, "code")
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
+if CODE_DIR not in sys.path:
+    sys.path.insert(0, CODE_DIR)
+
+from step_controller import GimbalStepController
 from gimbal.gimbal_controller_yaw import GimbalController
 
 class TestGimbalController(unittest.TestCase):

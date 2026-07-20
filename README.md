@@ -179,24 +179,27 @@ Yaw 1축 서보 모터 제어의 핵심 클래스입니다.
   - `-pi ~ pi` 범위로 정규화합니다.
 - `calculate_uwb_angles(my_pos, target_pos)`
   - UWB 타겟 데이터에서 azimuth 값을 그대로 yaw로 사용하는 단순 함수입니다.
-- `move_to(relative_rad)`
-  - 상대 yaw 라디안을 입력받아 서보 물리각 `0~180도`로 매핑합니다.
-  - 상대 0도는 서보 90도, 상대 -90도는 서보 0도, 상대 +90도는 서보 180도로 해석합니다.
+- `move_to(az_degree)`
+  - `-90~90도` 기준의 짐벌 명령각을 입력받아 서보 물리각 `0~180도`로 매핑합니다.
+  - 명령각 0도는 서보 90도, -90도는 서보 0도, +90도는 서보 180도로 해석합니다.
   - duty cycle은 `(target_degree / 18.0) + 2.5` 공식으로 계산합니다.
-  - 이동량에 비례해 대기한 뒤 duty를 0으로 내려 모터 떨림과 발열을 줄입니다.
+  - 반환값은 실제로 짐벌에 명령한 `gimbal_command_deg`입니다.
+- `move_by_uwb_relative(uwb_relative_degree, wait=True)`
+  - UWB가 준 현재 방향 기준 상대각을 이전 짐벌 명령각에 더해 다음 짐벌 명령각으로 변환합니다.
+  - 기본값에서는 명령 후 약 0.6초 대기합니다.
 - `cleanup()`
   - PWM 정지와 GPIO cleanup을 수행합니다.
 
-#### `code/gimbal/step_controller.py`
+#### `tests/gimbal/step_controller.py`
 
-`GimbalController`를 상속한 단계 이동 실험용 컨트롤러입니다.
+`GimbalController`를 상속한 단계 이동 실험용/레거시 컨트롤러입니다.
 
 - 목표 각도로 바로 이동하지 않고, 방향만 판단해서 duty를 0.1씩 증가/감소시킵니다.
 - GPS 모드에서는 `get_rotation_angle()`로 상대 방향을 판단합니다.
 - UWB 모드에서는 azimuth 부호로 회전 방향을 판단합니다.
 - 최종적으로 시계방향이면 duty 12.5, 반시계방향이면 duty 2.5까지 이동합니다.
 
-#### `code/gimbal/dir_init.py`
+#### `tests/gimbal/dir_init.py`
 
 서보를 정북/중앙 위치로 초기화하는 간단한 하드웨어 테스트 코드입니다.
 
@@ -204,13 +207,13 @@ Yaw 1축 서보 모터 제어의 핵심 클래스입니다.
 - duty 7.5를 1초 동안 주고 duty를 0으로 낮춥니다.
 - MG995/MG995 계열 서보 방향과 duty 관계를 확인하기 위한 파일입니다.
 
-#### `code/gimbal/test_gimbal_controller.py`
+#### `tests/gimbal/test_gimbal_controller.py`
 
-`GimbalStepController` 단위 테스트입니다.
+`GimbalController`와 `GimbalStepController` 단위 테스트입니다.
 
 - `RPi.GPIO`를 `MagicMock`으로 대체하여 라즈베리파이가 아닌 환경에서도 테스트할 수 있게 구성했습니다.
 - GPS/UWB 입력에 따라 duty가 0.1씩 증가 또는 감소하는지 확인합니다.
-- 초기 위치가 물리각 90도인지 확인합니다.
+- 초기 위치가 상대각 0도인지 확인합니다.
 
 ### 5. 센서 코드
 

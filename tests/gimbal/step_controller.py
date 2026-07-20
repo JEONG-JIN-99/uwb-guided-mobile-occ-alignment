@@ -3,11 +3,11 @@ import time
 import sys
 import os
 
-# 상위 폴더(code/)를 sys.path에 추가하여 단독 실행 시 패키지 임포트 문제 해결
 current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-if parent_dir not in sys.path:
-    sys.path.insert(0, parent_dir)
+project_root = os.path.dirname(os.path.dirname(current_dir))
+code_dir = os.path.join(project_root, "code")
+if code_dir not in sys.path:
+    sys.path.insert(0, code_dir)
 
 from gimbal.gimbal_controller_yaw import GimbalController
 

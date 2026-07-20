@@ -2,7 +2,6 @@ import argparse
 import os
 import socket
 import sys
-import threading
 import time
 
 
@@ -71,29 +70,7 @@ def main():
     sock.settimeout(0.2)
 
     gimbal = GimbalController(yaw_pin=args.yaw_pin)
-    latest_packet = None
-    latest_seq = 0
-    packet_lock = threading.Lock()
-    stop_event = threading.Event()
     source_printed = False
-
-    def receiver_loop():
-        nonlocal latest_packet, latest_seq
-
-        while not stop_event.is_set():
-            try:
-                data, addr = sock.recvfrom(1024)
-            except socket.timeout:
-                continue
-            except OSError:
-                break
-
-            recv_time_ns = time.time_ns()
-            with packet_lock:
-                latest_seq += 1
-                latest_packet = (latest_seq, data, addr, recv_time_ns)
-
-    receiver_thread = threading.Thread(target=receiver_loop, daemon=True)
 
     try:
         gimbal_command_deg = gimbal.move_to(args.initial_deg)
@@ -101,23 +78,13 @@ def main():
             f"[READY] listening on {args.host}:{args.port}, "
             f"initial gimbal_command_deg={gimbal_command_deg:.2f}"
         )
-        receiver_thread.start()
         print("[INFO] Move the opposite UWB module. Press Ctrl+C to stop.")
 
-        last_processed_seq = 0
         while True:
-            with packet_lock:
-                packet = latest_packet
-
-            if packet is None:
-                time.sleep(0.05)
+            try:
+                data, addr = sock.recvfrom(1024)
+            except socket.timeout:
                 continue
-
-            seq, data, addr, _recv_time_ns = packet
-            if seq == last_processed_seq:
-                time.sleep(0.05)
-                continue
-            last_processed_seq = seq
 
             try:
                 parsed = parse_uwb_packet(data)
@@ -149,12 +116,10 @@ def main():
     except KeyboardInterrupt:
         print("\n[STOP] interrupted by user")
     finally:
-        stop_event.set()
         gimbal.move_to(0.0)
         time.sleep(gimbal.ALIGN_INTERVAL_SEC)
         gimbal.cleanup()
         sock.close()
-        receiver_thread.join(timeout=1.0)
         print("[DONE] gimbal returned to 0 deg and GPIO cleaned up")
 
 
