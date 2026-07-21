@@ -7,6 +7,7 @@ class ResultLogger:
     def __init__(
         self,
         target_dir_name="result",
+        experiment_code=None,
         experiment_id=None,
         node_id=None,
         fieldnames=None,
@@ -14,10 +15,11 @@ class ResultLogger:
         """
         결과 로거를 생성한다.
 
-        node_id가 없으면 기존 방식처럼 result/ 바로 아래의 CSV에 기록한다.
-        node_id가 "tx" 또는 "rx"이면 실험별 폴더를 만들고 <node_id>.csv에
-        기록한다. Tx/Rx가 같은 실험 폴더를 공유해야 할 때는 양쪽에 동일한
-        experiment_id를 전달한다.
+        결과는 result/<experiment_code>/ 아래에 기록한다.
+        node_id가 "tx" 또는 "rx"이면 그 아래에 실험 ID 폴더를
+        만들고 <node_id>.csv에 기록한다. Tx/Rx가 같은 실험
+        폴더를 공유할 때는 동일한 experiment_code와 experiment_id를
+        전달한다.
         """
         # 1. 현재 파일의 절대 경로
         current_file = os.path.abspath(__file__)
@@ -27,9 +29,16 @@ class ResultLogger:
         code_dir = os.path.dirname(logger_dir)     # .../code
         project_root = os.path.dirname(code_dir)   # .../2026icufn(최상단 루트)
 
-        # 3. 프로젝트 최상단 루트 아래에 "result" 폴더 경로를 합침
-        # 예: /home/ciderlab/2026icufn/result
-        self.base_dir = os.path.join(project_root, target_dir_name)
+        # 프로젝트 루트의 result/<실험 코드> 경로를 만든다.
+        if not experiment_code:
+            raise ValueError("experiment_code is required")
+        experiment_code = str(experiment_code)
+        if experiment_code in (".", "..") or os.path.basename(experiment_code) != experiment_code:
+            raise ValueError("experiment_code must be a single directory name")
+
+        self.experiment_code = experiment_code
+        self.result_root = os.path.join(project_root, target_dir_name)
+        self.base_dir = os.path.join(self.result_root, experiment_code)
         os.makedirs(self.base_dir, exist_ok=True)
 
         self.experiment_id = None
@@ -177,4 +186,4 @@ class ResultLogger:
 
 
 if __name__ == "__main__":
-    logger = ResultLogger("result")
+    logger = ResultLogger("result", experiment_code="result_logger")

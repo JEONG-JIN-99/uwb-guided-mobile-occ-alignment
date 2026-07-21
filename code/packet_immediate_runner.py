@@ -185,6 +185,7 @@ def run_packet_immediate_experiment(node_id):
     try:
         result_logger = ResultLogger(
             target_dir_name="result",
+            experiment_code="packet_immediate_runner",
             experiment_id=args.experiment_id,
             node_id=node_id,
             fieldnames=log_fields,

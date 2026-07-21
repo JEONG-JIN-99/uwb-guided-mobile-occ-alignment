@@ -29,7 +29,10 @@ latest_data_info = None
 data_lock = threading.Lock()
 
 # CSV 로거 객체 생성 (자동으로 result 폴더 관리)
-logger = ResultLogger(target_dir_name="result")
+logger = ResultLogger(
+    target_dir_name="result",
+    experiment_code="socket_server",
+)
 
 # 30초 뒤 정북 방향 복귀를 제어할 타이머 변수
 return_timer = None

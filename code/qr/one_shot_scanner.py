@@ -6,14 +6,27 @@ import cv2
 from qr.scanner import SmartPhoneScanner
 
 class OneShotQRScanner(SmartPhoneScanner):
-    def __init__(self, ip, port="8080", crop_scale=0.3):
+    def __init__(
+        self,
+        ip,
+        port="8080",
+        crop_scale=0.3,
+        experiment_code="one_shot_scanner",
+    ):
         super().__init__(ip, port, crop_scale)
         self.detected_result = None
         current_file = os.path.abspath(__file__)
         qr_dir = os.path.dirname(current_file)
         code_dir = os.path.dirname(qr_dir)
         project_root = os.path.dirname(code_dir)
-        self.frame_save_dir = os.path.join(project_root, "result", "detect_frame")
+        if experiment_code in ("", ".", "..") or os.path.basename(experiment_code) != experiment_code:
+            raise ValueError("experiment_code must be a single directory name")
+        self.frame_save_dir = os.path.join(
+            project_root,
+            "result",
+            experiment_code,
+            "detect_frame",
+        )
 
         os.makedirs(self.frame_save_dir, exist_ok=True)
 

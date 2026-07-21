@@ -172,6 +172,7 @@ def main():
     try:
         result_logger = ResultLogger(
             target_dir_name="result",
+            experiment_code="tx_main",
             experiment_id=args.experiment_id,
             node_id="tx",
             fieldnames=TX_LOG_FIELDS,

@@ -43,10 +43,17 @@ latest_data_info = None
 data_lock = threading.Lock()
 
 # CSV 로거 객체 생성 (자동으로 result 폴더 관리)
-logger = ResultLogger(target_dir_name="result")
+logger = ResultLogger(
+    target_dir_name="result",
+    experiment_code="socket_server_test",
+)
 
 # QR 스캐너 객체 생성
-qr_scanner = OneShotQRScanner(PHONE_IP, PHONE_PORT)
+qr_scanner = OneShotQRScanner(
+    PHONE_IP,
+    PHONE_PORT,
+    experiment_code="socket_server_test",
+)
 
 def udp_receiver_thread():
     """

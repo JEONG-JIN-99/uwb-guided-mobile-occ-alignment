@@ -115,6 +115,7 @@ def run_packet_experiment(node_id="rx"):
     try:
         result_logger = ResultLogger(
             target_dir_name="result",
+            experiment_code=f"{node_id}_packet_test",
             experiment_id=args.experiment_id,
             node_id=node_id,
             fieldnames=log_fields(node_id),

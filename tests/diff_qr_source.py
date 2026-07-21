@@ -1,49 +1,43 @@
 import cv2
-from pyzbar import pyzbar
 import time
 import math
 from picamera2 import Picamera2
 
 class HardwareScanner:
     def __init__(self, crop_scale=1.0, live_stream=False):
-        """
-        crop_scale: 프레임 크롭 비율 (0.3이면 중앙 30% 영역만 스캔)
-        live_stream: True일 경우 cv2.imshow()를 통해 VNC 화면에 영상을 출력합니다.
-        """
         self.picam2 = None
         self.last_data = None
         self.is_running = False
         self.crop_scale = crop_scale
         self.live_stream = live_stream
+        
+        self.qr_detector = cv2.QRCodeDetector()
 
     def connect(self):
         """Picamera2 자원 초기화 및 시작"""
         print("[*] Connecting to Raspberry Pi Camera via Picamera2...")
         try:
             self.picam2 = Picamera2()
-
-            # 해상도를 1280x720 (또는 필요에 따라 640x480)으로 설정
-            # 기본 RGB888 포맷 지정
+            
+            # RGB 대신 BGR888로 초기화하여 OpenCV와의 색상 변환 연산(cv2.cvtColor) 완전 제거!
             config = self.picam2.create_preview_configuration(
-                main={"format": "RGB888", "size": (1280, 720)}
+                main={"format": "BGR888", "size": (1280, 720)}
             )
             self.picam2.configure(config)
             self.picam2.start()
-
+            
             print("[+] Picamera2 hardware connected and started successfully.")
             
             if self.live_stream:
-                # OpenCV 5.x 호환 플래그 (WINDOW_NORMAL 대신 0 사용 가능)
                 cv2.namedWindow("QR Scanner Live Stream", 0)
                 print("[*] Live stream window initialized. Press 'q' on the window to exit.")
-
+                
             return True
         except Exception as e:
             print(f"[!] Error starting Picamera2: {e}")
             return False
 
     def cropped_frame(self, frame, crop_scale):
-        """중앙을 기준으로 crop_scale 비율만큼 프레임을 크롭하고 원본 좌표계용 오프셋 반환"""
         if crop_scale >= 1.0 or crop_scale <= 0:
             return frame, 0, 0
 
@@ -62,43 +56,36 @@ class HardwareScanner:
         return cropped, x_start, y_start
 
     def process_frame(self, frame, offset_x=0, offset_y=0, orig_w=1280, orig_h=720):
-        """크롭된 프레임(RGB)에서 QR 코드를 탐지하고 실제 렌즈 중심과의 거리 계산"""
-        # 실제 전체 카메라 렌즈의 중심값
         cam_center_x, cam_center_y = orig_w // 2, orig_h // 2
 
-        # pyzbar는 RGB/BGR 배열 모두 디코딩 가능하므로 크롭된 상태로 즉시 탐지 (연산 절약)
-        decoded_objects = pyzbar.decode(frame)
-    
-        for obj in decoded_objects:
-            current_data = obj.data.decode("utf-8")
-            barcode_type = obj.type
-            
-            (x, y, w_qr, h_qr) = obj.rect
-            # 크롭 좌표계 -> 원본 좌표계(1280x720)로 복원하여 실제 중심 계산
-            qr_center_x = offset_x + x + (w_qr // 2)
-            qr_center_y = offset_y + y + (h_qr // 2)
-            
-            # 라이브 스트림인 경우 복사본이 아닌 frame 자체에 사각형을 그립니다.
+        data, points, _ = self.qr_detector.detectAndDecode(frame)
+
+        if points is not None and data:
+            pts = points[0]
+
+            qr_local_center_x = int(sum(p[0] for p in pts) / 4)
+            qr_local_center_y = int(sum(p[1] for p in pts) / 4)
+
+            qr_center_x = offset_x + qr_local_center_x
+            qr_center_y = offset_y + qr_local_center_y
+
             if self.live_stream:
-                cv2.rectangle(frame, (x, y), (x + w_qr, y + h_qr), (0, 255, 0), 2)
-                cv2.circle(frame, (x + (w_qr // 2), y + (h_qr // 2)), 5, (0, 0, 255), -1)
-            
-            # 전체 렌즈 중심과 QR 코드 중심 간의 정밀 픽셀 거리 측정
+                pts_int = pts.astype(int)
+                cv2.polylines(frame, [pts_int], isClosed=True, color=(0, 255, 0), thickness=2)
+                cv2.circle(frame, (qr_local_center_x, qr_local_center_y), 5, (0, 0, 255), -1)
+
             distance = math.sqrt((cam_center_x - qr_center_x)**2 + (cam_center_y - qr_center_y)**2)
-            self.on_detect(barcode_type, current_data, distance)
-            
+            self.on_detect("QRCODE", data, distance)
+
         if self.live_stream:
-            # 크롭 화면 내부의 중심에 조준점(Crosshair) 그리기 (OpenCV 5.x 호환 Marker=0)
             ch, cw = frame.shape[:2]
             cv2.drawMarker(frame, (cw // 2, ch // 2), (255, 0, 0), 0, 20, 2)
 
     def on_detect(self, b_type, data, distance):
-        """QR 코드가 탐지되었을 때 실행할 액션"""
         timestamp = time.strftime('%H:%M:%S')
         print(f"[{timestamp}] Detect ({b_type}): {data} | Center Distance: {distance:.2f}px")
 
     def run(self):
-        """스캐너 메인 루프 실행"""
         if not self.picam2:
             if not self.connect():
                 return
@@ -106,27 +93,23 @@ class HardwareScanner:
         self.is_running = True
         try:
             while self.is_running:
-                # Picamera2 고속 NumPy 배열 캡처 (기본 RGB)
+                # BGR 포맷으로 프레임 수신
                 frame = self.picam2.capture_array()
                 if frame is None:
                     print("[!] Failed to grab frame from Picamera2.")
                     break
-
+                
                 orig_h, orig_w = frame.shape[:2]
                 
-                # 1. 고속 연산을 위해 원본 RGB 상태로 필요한 영역만 크롭
                 cropped, offset_x, offset_y = self.cropped_frame(frame, self.crop_scale)
                 
-                # 2. QR 코드 디코딩 및 거리 연산 수행
                 self.process_frame(cropped, offset_x, offset_y, orig_w=orig_w, orig_h=orig_h)
                 
-                # 3. 화면 출력이 필요할 때만 BGR 변환 및 리사이즈 수행 (CPU 부하 최소화)
+                # 색상 변환 없이(cv2.cvtColor 제거) 바로 출력!
                 if self.live_stream:
-                    bgr_cropped = cv2.cvtColor(cropped, cv2.COLOR_RGB2BGR)
-                    display_frame = cv2.resize(bgr_cropped, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
+                    display_frame = cv2.resize(cropped, (orig_w, orig_h), interpolation=cv2.INTER_LINEAR)
                     cv2.imshow("QR Scanner Live Stream", display_frame)
                 
-                # 'q' 키 누르면 안전하게 종료
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     print("[*] 'q' key pressed. Stopping...")
                     break
@@ -137,7 +120,6 @@ class HardwareScanner:
             self.stop()
 
     def stop(self):
-        """카메라 및 GUI 자원 해제"""
         self.is_running = False
         if self.picam2:
             try:
@@ -148,8 +130,6 @@ class HardwareScanner:
         cv2.destroyAllWindows()
         print("[*] Scanner resources released.")
 
-# --- 메인 실행부 ---
 if __name__ == "__main__":
-    # 정밀 타겟팅을 위해 crop_scale을 0.4 정도로 주어 중앙부 센싱력 강화
-    scanner = HardwareScanner(crop_scale=0.3, live_stream=True)
+    scanner = HardwareScanner(crop_scale=1.0, live_stream=True)
     scanner.run()

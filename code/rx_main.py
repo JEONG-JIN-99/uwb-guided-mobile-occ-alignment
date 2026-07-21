@@ -6,6 +6,7 @@ import time
 
 from gimbal.gimbal_controller_yaw import GimbalController
 from logger.result_logger import ResultLogger
+from qr.realsense_scanner import HardwareScanner
 from time_sync.chrony_clock import (
     format_utc_epoch_ns,
     parse_utc_epoch_ns,
@@ -27,6 +28,7 @@ RX_LOG_FIELDS = (
     "rx_uwb_azimuth_deg",
     "rx_correction_deg",
     "rx_gimbal_command_deg",
+    "qr_detected",
 )
 
 
@@ -101,6 +103,18 @@ def main():
         help="Alignment period in seconds (default: 0.2)",
     )
     parser.add_argument(
+        "--qr-device-index",
+        type=int,
+        default=4,
+        help="QR camera V4L2 device index (default: 4 for /dev/video4)",
+    )
+    parser.add_argument(
+        "--qr-crop-scale",
+        type=float,
+        default=0.3,
+        help="Centered QR detection crop ratio (default: 0.3)",
+    )
+    parser.add_argument(
         "--chrony-max-correction-sec",
         type=float,
         default=0.005,
@@ -117,6 +131,8 @@ def main():
         parser.error("--samples must be greater than zero")
     if args.alignment_period_sec <= 0:
         parser.error("--alignment-period-sec must be greater than zero")
+    if not 0 < args.qr_crop_scale <= 1.0:
+        parser.error("--qr-crop-scale must be greater than 0 and at most 1")
     if args.chrony_max_correction_sec <= 0:
         parser.error("--chrony-max-correction-sec must be greater than zero")
     if args.chrony_wait_tries <= 0:
@@ -130,6 +146,11 @@ def main():
     print("[SYNC] Chrony synchronization is ready")
 
     gimbal = GimbalController(yaw_pin=args.yaw_pin)
+    qr_scanner = HardwareScanner(
+        device_index=args.qr_device_index,
+        crop_scale=args.qr_crop_scale,
+        live_stream=False,
+    )
 
     # Open the UDP socket only after gimbal initialization so packets cannot
     # accumulate in the socket buffer during the controller's startup delay.
@@ -143,6 +164,7 @@ def main():
     source_printed = False
     result_logger = None
     receiver_started = False
+    qr_capture_started = False
 
     def receiver_loop():
         while not stop_event.is_set():
@@ -175,6 +197,7 @@ def main():
     try:
         result_logger = ResultLogger(
             target_dir_name="result",
+            experiment_code="rx_main",
             experiment_id=args.experiment_id,
             node_id="rx",
             fieldnames=RX_LOG_FIELDS,
@@ -191,6 +214,15 @@ def main():
         )
         receiver_thread.start()
         receiver_started = True
+        if not qr_scanner.start_capture():
+            raise RuntimeError(
+                f"failed to start QR camera /dev/video{args.qr_device_index}"
+            )
+        qr_capture_started = True
+        print(
+            f"[QR] capturing latest frames from /dev/video{args.qr_device_index}, "
+            f"crop_scale={args.qr_crop_scale:.3f}"
+        )
         print(
             f"[INFO] Move the opposite UWB module. "
             f"The experiment stops after {args.samples} alignments."
@@ -239,6 +271,15 @@ def main():
                     alignment_time_ns - experiment_start_ns
                 ) / 1_000_000_000
 
+                # 현재 정렬 명령 이후에 들어오는 새 프레임들을 다음 정렬의
+                # 절대 목표 시각까지만 검사한다. 성공 결과에는 성공 프레임이,
+                # 실패 결과에는 마지막으로 검사한 최신 프레임이 들어간다.
+                qr_deadline_ns = (
+                    experiment_start_ns
+                    + (sample_index + 1) * alignment_period_ns
+                )
+                qr_result = qr_scanner.detect_until(qr_deadline_ns)
+
                 result_logger.log_sample(
                     {
                         "sample_index": sample_index,
@@ -247,6 +288,7 @@ def main():
                         "rx_uwb_azimuth_deg": f"{uwb_relative_deg:.6f}",
                         "rx_correction_deg": f"{correction_deg:.6f}",
                         "rx_gimbal_command_deg": f"{gimbal_command_deg:.6f}",
+                        "qr_detected": int(qr_result.detected),
                     }
                 )
 
@@ -256,6 +298,7 @@ def main():
                     f"  correction_deg     : {correction_deg:.2f}\n"
                     f"  prev_gimbal_deg    : {before_command_deg:.2f}\n"
                     f"  gimbal_command_deg : {gimbal_command_deg:.2f}\n"
+                    f"  qr_detected        : {int(qr_result.detected)}\n"
                     f"  nominal_elapsed_sec: {nominal_elapsed_sec:.3f}\n"
                     f"  actual_elapsed_sec : {actual_elapsed_sec:.3f}"
                 )
@@ -274,6 +317,8 @@ def main():
         stop_event.set()
         if result_logger is not None:
             result_logger.close()
+        if qr_capture_started:
+            qr_scanner.stop()
         gimbal.move_to(0.0)
         time.sleep(gimbal.ALIGN_INTERVAL_SEC)
         gimbal.cleanup()

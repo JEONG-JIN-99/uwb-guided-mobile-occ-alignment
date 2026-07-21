@@ -149,6 +149,15 @@ class GimbalController:
 
         return gimbal_command_deg
 
+    def disable_control_signal(self):
+        """PWM 제어 펄스를 끄되 GPIO와 현재 명령각 상태는 유지한다.
+
+        서보가 목표 위치에 도달한 뒤 발생하는 소프트웨어 PWM 지터를 비교
+        시험할 때 사용한다. 제어 펄스를 끄면 서보의 유지 토크도 사라지므로
+        외력이나 하중이 크면 실제 각도가 처질 수 있다.
+        """
+        self.yaw_pwm.ChangeDutyCycle(0)
+
     def cleanup(self):
         self.yaw_pwm.stop()
         GPIO.cleanup()
