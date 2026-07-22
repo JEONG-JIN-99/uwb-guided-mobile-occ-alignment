@@ -39,7 +39,8 @@ class QRDetectionResult:
     카메라에서 새 프레임을 전혀 받지 못한 경우에만 ``frame``이 None이다.
     """
 
-    detected: bool
+    visible: bool = False
+    detected: bool = False
     frame: Optional[Any] = None
     data: Optional[str] = None
     barcode_type: Optional[str] = None
@@ -63,6 +64,7 @@ class HardwareScanner:
         self.is_running = False
         self.crop_scale = crop_scale
         self.live_stream = live_stream
+        self.qr_detector = cv2.QRCodeDetector()
 
         # 카메라 수신 스레드의 생명주기를 관리한다.
         self.capture_thread = None
@@ -160,18 +162,22 @@ class HardwareScanner:
         return None
 
     def detect_qr(self, frame):
-        """고정된 프레임 한 장에서 QR 인식 여부와 데이터를 반환한다.
+        """고정된 프레임에서 QR 위치 패턴 검출과 데이터 디코딩을 수행한다.
 
         성공 결과에는 전달받은 프레임 자체가 포함된다. 수신 스레드는 기존
         배열을 수정하지 않고 새 배열로 교체하므로 탐지 중인 프레임은 안전하다.
         이 메서드는 카메라를 직접 읽지 않아 저장 영상에도 사용할 수 있다.
         """
+        visible, _points = self.qr_detector.detect(frame)
         decoded = self._decode_first_qr(frame)
         if decoded is None:
-            return QRDetectionResult(detected=False)
+            return QRDetectionResult(visible=bool(visible), detected=False)
 
         obj, data, distance = decoded
         return QRDetectionResult(
+            # 디코딩 성공은 QR이 영상에 존재한다는 더 강한 증거이므로,
+            # OpenCV 위치 검출 결과와 관계없이 visible도 참으로 둔다.
+            visible=True,
             detected=True,
             frame=frame,
             data=data,
@@ -340,18 +346,17 @@ class HardwareScanner:
     def detect_until(self, deadline_ns):
         """호출 이후 도착한 프레임을 다음 정렬 목표 시각까지 검사한다.
 
-        QR을 찾으면 즉시 성공 결과와 그 QR을 인식한 프레임을 반환한다.
-        마감 시각까지 찾지 못하면 ``detected=False``와 마지막 검사 프레임을
-        반환한다. 호출 이후 새 프레임이 없었다면 호출 시점의 최신 프레임을
-        실패 프레임으로 사용한다.
+        디코딩에 성공하면 즉시 반환한다. 위치 패턴만 검출된 경우에는 그 결과를
+        보존하면서 이후 프레임의 디코딩 성공을 계속 기다린다.
         """
         if self.capture_thread is None or not self.capture_thread.is_alive():
-            return QRDetectionResult(detected=False)
+            return QRDetectionResult()
 
         # 호출 시점에 이미 있던 프레임은 정렬 이전 영상일 수 있으므로 제외한다.
         snapshot = self.get_latest_frame()
         last_snapshot = snapshot
         last_frame_id = snapshot.frame_id if snapshot is not None else 0
+        visible_result = None
 
         while time.monotonic_ns() < deadline_ns:
             snapshot = self.wait_for_new_frame(last_frame_id, deadline_ns)
@@ -363,6 +368,7 @@ class HardwareScanner:
             result = self.detect_qr(snapshot.frame)
             if result.detected:
                 return QRDetectionResult(
+                    visible=True,
                     detected=True,
                     frame=result.frame,
                     data=result.data,
@@ -372,11 +378,23 @@ class HardwareScanner:
                     captured_ns=snapshot.captured_ns,
                     rect=result.rect,
                 )
+            if result.visible and visible_result is None:
+                visible_result = QRDetectionResult(
+                    visible=True,
+                    detected=False,
+                    frame=snapshot.frame,
+                    frame_id=snapshot.frame_id,
+                    captured_ns=snapshot.captured_ns,
+                )
+
+        if visible_result is not None:
+            return visible_result
 
         if last_snapshot is None:
-            return QRDetectionResult(detected=False)
+            return QRDetectionResult()
 
         return QRDetectionResult(
+            visible=False,
             detected=False,
             frame=last_snapshot.frame,
             frame_id=last_snapshot.frame_id,

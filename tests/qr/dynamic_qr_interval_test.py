@@ -5,6 +5,7 @@ import argparse
 import csv
 import random
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -19,8 +20,13 @@ for path in (str(CODE_DIR), str(TEST_QR_DIR)):
 
 
 RESULT_FIELDS = (
-    "qr_success",
-    "qr_recognition_time_ms",
+    "distance_m",
+    "interval_s",
+    "initial_gimbal_deg",
+    "uwb_raw_azimuth_deg",
+    "gimbal_command_deg",
+    "qr_visible",
+    "qr_detected",
 )
 
 
@@ -34,16 +40,22 @@ def build_parser():
     parser.add_argument("--device-index", type=int, default=4)
     parser.add_argument("--crop-scale", type=float, default=0.3)
     parser.add_argument(
+        "--distance",
+        type=float,
+        required=True,
+        help="manually measured experiment distance in meters",
+    )
+    parser.add_argument(
         "--interval",
         type=float,
-        default=2.0,
-        help="QR detection window after the UWB alignment command (default: 2.0)",
+        default=1.0,
+        help="QR detection window immediately after the UWB alignment command (default: 1.0)",
     )
     parser.add_argument(
         "--attempts",
         type=int,
-        default=30,
-        help="number of complete dynamic alignment attempts (default: 30)",
+        default=100,
+        help="number of complete dynamic alignment attempts (default: 100)",
     )
     parser.add_argument(
         "--warmup",
@@ -56,40 +68,40 @@ def build_parser():
     parser.add_argument(
         "--initial-min",
         type=int,
-        default=0,
-        help="minimum initial gimbal angle (default: 0)",
+        default=-50,
+        help="minimum initial gimbal angle (default: -50)",
     )
     parser.add_argument(
         "--initial-max",
         type=int,
-        default=0,
-        help="maximum initial gimbal angle (default: 0)",
+        default=50,
+        help="maximum initial gimbal angle (default: 50)",
     )
     parser.add_argument(
         "--settle-time",
         type=float,
-        default=3.0,
-        help="stabilization time after moving to the random angle (default: 3.0)",
+        default=2.0,
+        help="stabilization time after moving to the random angle (default: 2.0)",
     )
     parser.add_argument(
         "--zero-settle-time",
         type=float,
-        default=3.0,
-        help="stabilization time after returning to zero (default: 3.0)",
+        default=2.0,
+        help="stabilization time after returning to zero (default: 2.0)",
     )
     parser.add_argument(
         "--alignment-settle-time",
         type=float,
-        default=3.0,
-        help="stabilization time after the UWB alignment command (default: 3.0)",
+        default=2.0,
+        help="total stabilization time after the UWB alignment command (default: 2.0)",
     )
     parser.add_argument(
         "--servo-drive-time",
         type=float,
-        default=0.6,
+        default=0.4,
         help=(
             "time to keep PWM active after each move before disabling the "
-            "control signal (default: 0.6)"
+            "control signal (default: 0.4)"
         ),
     )
     parser.add_argument(
@@ -111,6 +123,8 @@ def build_parser():
 def validate_args(parser, args):
     if args.attempts <= 0:
         parser.error("--attempts must be greater than 0")
+    if args.distance <= 0:
+        parser.error("--distance must be greater than 0")
     if args.interval <= 0:
         parser.error("--interval must be greater than 0")
     if (
@@ -135,7 +149,7 @@ def iso_now():
     return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
-def show_result(cv2, result, recognition_text, window_name):
+def show_result(cv2, result, window_name):
     if cv2 is None or result.frame is None:
         return False
 
@@ -152,7 +166,10 @@ def show_result(cv2, result, recognition_text, window_name):
             color,
             thickness,
         )
-        label = f"SUCCESS {recognition_text} {result.data or ''}"
+        label = f"DETECTED {result.data or ''}"
+    elif result.visible:
+        color = (0, 255, 255)
+        label = "VISIBLE: QR pattern detected"
     else:
         cv2.rectangle(
             display,
@@ -161,7 +178,7 @@ def show_result(cv2, result, recognition_text, window_name):
             color,
             thickness,
         )
-        label = "FAIL: QR not decoded"
+        label = "NOT VISIBLE"
 
     cv2.putText(
         display,
@@ -227,11 +244,11 @@ def main(argv=None):
     from gimbal.gimbal_controller_yaw import GimbalController
     from realsense_scanner import HardwareScanner
 
+    import cv2 as cv2_module
+
     cv2 = None
     window_name = "Dynamic QR Interval Test"
     if args.live_stream:
-        import cv2 as cv2_module
-
         cv2 = cv2_module
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
@@ -240,6 +257,7 @@ def main(argv=None):
     results_path = run_dir / "dynamic_qr_results.csv"
 
     print(f"Attempts: {args.attempts}")
+    print(f"Experiment distance: {args.distance:g}m")
     print(f"Random initial range: {args.initial_min} to {args.initial_max} deg")
     print(f"Post-alignment settle time: {args.alignment_settle_time:g}s")
     print(
@@ -259,7 +277,8 @@ def main(argv=None):
     uwb = None
     scanner = None
     attempts_completed = 0
-    successes = 0
+    visible_count = 0
+    detected_count = 0
     stop_requested = False
 
     try:
@@ -286,7 +305,10 @@ def main(argv=None):
                 row.update(
                     {
                         "attempt": attempt,
-                        "qr_success": False,
+                        "distance_m": f"{args.distance:.6f}",
+                        "interval_s": f"{args.interval:.6f}",
+                        "qr_visible": False,
+                        "qr_detected": False,
                         "servo_clipped": False,
                         "status": "error",
                         "started_at": iso_now(),
@@ -331,71 +353,121 @@ def main(argv=None):
                         row["status"] = "uwb_timeout"
                         print("  UWB timeout")
                     else:
-                        (distance, raw_azimuth, _elevation), _received_ns, address = uwb_result
+                        (_uwb_distance, raw_azimuth, _elevation), _received_ns, address = uwb_result
                         requested = estimate_tx_azimuth(initial_deg, raw_azimuth)
                         command, clipped = clamp_servo_command(requested, -90.0, 90.0)
                         row.update(
                             {
-                                "uwb_distance_m": distance,
                                 "uwb_raw_azimuth_deg": raw_azimuth,
-                                "requested_gimbal_command_deg": requested,
                                 "gimbal_command_deg": command,
                                 "servo_clipped": clipped,
                                 "uwb_source": f"{address[0]}:{address[1]}",
                             }
                         )
 
-                        # UWB 정렬 명령 후 지정된 안정화 시간을 온전히 기다린다.
-                        # QR 인식 시간은 안정화가 끝난 뒤 별도로 측정한다.
+                        # UWB 정렬 명령 직후 QR을 검사한다. PWM은 정렬 명령 후
+                        # servo_drive_time까지 유지하고, 이후 남은 안정화 시간을 기다린다.
                         gimbal.move_to(command)
-                        if settle_after_move(
-                            cv2,
-                            scanner,
-                            gimbal,
-                            args.alignment_settle_time,
-                            args.servo_drive_time,
-                            args.keep_pwm_active,
-                            window_name,
+                        alignment_started_ns = time.monotonic_ns()
+                        qr_started_ns = alignment_started_ns
+                        qr_deadline_ns = (
+                            qr_started_ns + int(args.interval * 1_000_000_000)
+                        )
+                        qr_holder = {}
+
+                        def detect_qr_during_alignment():
+                            try:
+                                qr_holder["result"] = scanner.detect_until(
+                                    qr_deadline_ns
+                                )
+                            except Exception as exc:
+                                qr_holder["error"] = exc
+
+                        qr_thread = threading.Thread(
+                            target=detect_qr_during_alignment,
+                            name="dynamic-qr-detection",
+                        )
+                        qr_thread.start()
+
+                        pwm_disable_ns = (
+                            alignment_started_ns
+                            + int(args.servo_drive_time * 1_000_000_000)
+                        )
+                        pwm_remaining_s = max(
+                            0.0,
+                            (pwm_disable_ns - time.monotonic_ns()) / 1_000_000_000,
+                        )
+                        if show_live_during_wait(
+                            cv2, scanner, pwm_remaining_s, window_name
                         ):
                             stop_requested = True
 
-                        qr_started_ns = time.monotonic_ns()
-                        qr_result = scanner.detect_until(
-                            qr_started_ns + int(args.interval * 1_000_000_000)
+                        if not args.keep_pwm_active:
+                            gimbal.disable_control_signal()
+
+                        alignment_deadline_ns = (
+                            alignment_started_ns
+                            + int(args.alignment_settle_time * 1_000_000_000)
                         )
+                        settle_remaining_s = max(
+                            0.0,
+                            (alignment_deadline_ns - time.monotonic_ns())
+                            / 1_000_000_000,
+                        )
+                        if show_live_during_wait(
+                            cv2, scanner, settle_remaining_s, window_name
+                        ):
+                            stop_requested = True
+
+                        qr_thread.join()
+                        if "error" in qr_holder:
+                            raise qr_holder["error"]
+                        qr_result = qr_holder["result"]
+
                         if qr_result.detected:
-                            recognition_ms = (
-                                (qr_result.captured_ns - qr_started_ns) / 1_000_000
-                                if qr_result.captured_ns is not None
-                                else None
-                            )
-                            recognition_text = (
-                                f"{recognition_ms:.3f}ms"
-                                if recognition_ms is not None
-                                else "unknown"
-                            )
-                            successes += 1
+                            detected_count += 1
                             row.update(
                                 {
-                                    "qr_success": True,
-                                    "qr_recognition_time_ms": (
-                                        f"{recognition_ms:.3f}"
-                                        if recognition_ms is not None
-                                        else ""
-                                    ),
+                                    "qr_visible": True,
+                                    "qr_detected": True,
                                     "qr_data": qr_result.data or "",
                                     "status": "success",
                                 }
                             )
+                        elif qr_result.visible:
+                            row.update(
+                                {
+                                    "qr_visible": True,
+                                    "qr_detected": False,
+                                    "status": "visible_not_decoded",
+                                }
+                            )
                         else:
-                            recognition_text = "timeout"
                             row["status"] = "qr_timeout"
+
+                        if not qr_result.detected and qr_result.frame is not None:
+                            failed_frames_dir = run_dir / "failed_frames"
+                            failed_frames_dir.mkdir(parents=True, exist_ok=True)
+                            failure_path = failed_frames_dir / (
+                                f"attempt_{attempt:03d}_{row['status']}.jpg"
+                            )
+                            if not cv2_module.imwrite(
+                                str(failure_path), qr_result.frame
+                            ):
+                                raise RuntimeError(
+                                    f"failed to save QR failure frame: {failure_path}"
+                                )
+                            print(f"  Failure frame: {failure_path}")
+
+                        if qr_result.visible:
+                            visible_count += 1
 
                         print(
                             f"  UWB={raw_azimuth:.2f} deg, command={command:.2f} deg, "
-                            f"QR={row['status']}"
+                            f"visible={int(row['qr_visible'])}, "
+                            f"detected={int(row['qr_detected'])}"
                         )
-                        if show_result(cv2, qr_result, recognition_text, window_name):
+                        if show_result(cv2, qr_result, window_name):
                             stop_requested = True
 
                 except Exception as exc:
@@ -406,10 +478,13 @@ def main(argv=None):
                     row["finished_at"] = iso_now()
                     writer.writerow(
                         {
-                            "qr_success": row["qr_success"],
-                            "qr_recognition_time_ms": row[
-                                "qr_recognition_time_ms"
-                            ],
+                            "distance_m": row["distance_m"],
+                            "interval_s": row["interval_s"],
+                            "initial_gimbal_deg": row["initial_gimbal_deg"],
+                            "uwb_raw_azimuth_deg": row["uwb_raw_azimuth_deg"],
+                            "gimbal_command_deg": row["gimbal_command_deg"],
+                            "qr_visible": row["qr_visible"],
+                            "qr_detected": row["qr_detected"],
                         }
                     )
                     result_file.flush()
@@ -433,14 +508,19 @@ def main(argv=None):
         if scanner is not None:
             scanner.stop()
 
-    failures = attempts_completed - successes
-    rate = successes / attempts_completed * 100 if attempts_completed else 0.0
+    visible_rate = (
+        visible_count / attempts_completed * 100 if attempts_completed else 0.0
+    )
+    detected_rate = (
+        detected_count / attempts_completed * 100 if attempts_completed else 0.0
+    )
     print(
-        f"Summary: attempts={attempts_completed}, successes={successes}, "
-        f"failures={failures}, success_rate={rate:.1f}%"
+        f"Summary: attempts={attempts_completed}, "
+        f"visible={visible_count} ({visible_rate:.1f}%), "
+        f"detected={detected_count} ({detected_rate:.1f}%)"
     )
     print(f"Results saved to: {results_path}")
-    return 0 if successes else 2
+    return 0 if visible_count else 2
 
 
 if __name__ == "__main__":

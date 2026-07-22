@@ -88,11 +88,42 @@ python tests/gimbal/step_controller.py
 
 ## `dir_init.py`
 
-서보를 중앙 방향(PWM 7.5, 상대각 0도)으로 한 번 정렬하는 단순 하드웨어 확인 코드입니다.
-실제 GPIO를 사용합니다.
+서보를 중앙 방향(PWM 7.5, 상대각 0도)으로 정렬한 뒤 PWM 신호를 끕니다.
+기본 실행은 화면 없는 환경을 위한 정렬 전용 모드로 즉시 종료합니다.
+`--live-stream`을 사용하면 QR 수동 배치를 위해 전체 영상의 중앙 30% 영역만
+잘라서 계속 표시합니다. 빨간 십자선은 잘린 영상의 중심입니다.
+`q`, `Esc`, `Ctrl+C` 또는 창 닫기로 종료할 수 있으며 종료 시 카메라, 창, PWM 및
+GPIO 자원을 정리합니다.
 
 실행:
 
 ```bash
 python tests/gimbal/dir_init.py
+```
+
+카메라 화면 표시:
+
+```bash
+python tests/gimbal/dir_init.py --live-stream
+```
+
+## `alignment__duration_test.py`
+
+PWM을 얼마 동안 유지해야 짐벌이 목표각에 도착하는지 수동으로 측정합니다.
+다음 네 구간을 순서대로 시험합니다.
+
+```text
+-90도 -> 0도
++90도 -> 0도
+-90도 -> +90도
++90도 -> -90도
+```
+
+각 회차에서 출발각에 도착한 것을 확인한 뒤 Enter를 누르면 목표각 이동과 시간
+측정이 동시에 시작됩니다. 목표각에 도착했다고 판단한 순간 다시 Enter를 누르면
+측정을 종료하고 즉시 PWM 신호를 끕니다. 터미널에도 측정 시간이 초 단위로
+출력됩니다.
+
+```bash
+python tests/gimbal/alignment__duration_test.py
 ```
