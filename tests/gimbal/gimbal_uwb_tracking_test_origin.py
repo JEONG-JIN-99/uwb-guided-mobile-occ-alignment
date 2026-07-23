@@ -13,7 +13,6 @@ if CODE_DIR not in sys.path:
 from gimbal.gimbal_controller_yaw import GimbalController
 
 
-TRACKING_INTERVAL_SEC = 0.2
 UWB_DEADBAND_DEG = 0.0
 MAX_CORRECTION_PER_FRAME_DEG = 60.0
 
@@ -30,7 +29,8 @@ def parse_uwb_packet(data):
     if len(parts) < 4:
         raise ValueError(f"packet has too few fields: {message}")
 
-    if parts[0] != "1":
+    header = parts[0]
+    if header != "1":
         return None
 
     distance = float(parts[1])
@@ -40,7 +40,7 @@ def parse_uwb_packet(data):
 
 
 def limit_uwb_correction(uwb_relative_deg):
-    """Apply the tracking deadband and per-update correction limit."""
+    """Apply the tracking deadband and per-frame correction limit."""
     if abs(uwb_relative_deg) < UWB_DEADBAND_DEG:
         return 0.0
 
@@ -50,46 +50,9 @@ def limit_uwb_correction(uwb_relative_deg):
     )
 
 
-def receive_latest_packet(sock, buffer_size=1024):
-    """Wait for a packet, discard the backlog, and return only the newest one."""
-    latest_packet = sock.recvfrom(buffer_size)
-    previous_timeout = sock.gettimeout()
-    sock.setblocking(False)
-
-    try:
-        while True:
-            latest_packet = sock.recvfrom(buffer_size)
-    except BlockingIOError:
-        return latest_packet
-    finally:
-        sock.settimeout(previous_timeout)
-
-
-def receive_latest_available_packet(sock, buffer_size=1024):
-    """Drain queued packets without waiting and return the newest, if any."""
-    latest_packet = None
-    previous_timeout = sock.gettimeout()
-    sock.setblocking(False)
-
-    try:
-        while True:
-            latest_packet = sock.recvfrom(buffer_size)
-    except BlockingIOError:
-        return latest_packet
-    finally:
-        sock.settimeout(previous_timeout)
-
-
-def wait_until_next_update(next_update_ns):
-    """Keep the tracking loop on a fixed 0.2-second cadence."""
-    remaining_ns = next_update_ns - time.monotonic_ns()
-    if remaining_ns > 0:
-        time.sleep(remaining_ns / 1_000_000_000)
-
-
 def main():
     parser = argparse.ArgumentParser(
-        description="Hardware test: track the latest UWB angle every 0.2 seconds."
+        description="Hardware test: track a moving UWB target with yaw gimbal."
     )
     parser.add_argument("--host", default="0.0.0.0", help="UDP bind host")
     parser.add_argument("--port", type=int, default=5005, help="UDP bind port")
@@ -104,7 +67,7 @@ def main():
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((args.host, args.port))
-    sock.settimeout(TRACKING_INTERVAL_SEC)
+    sock.settimeout(0.2)
 
     gimbal = GimbalController(yaw_pin=args.yaw_pin)
     source_printed = False
@@ -115,20 +78,13 @@ def main():
             f"[READY] listening on {args.host}:{args.port}, "
             f"initial gimbal_command_deg={gimbal_command_deg:.2f}"
         )
-        print(
-            f"[INFO] Tracking every {TRACKING_INTERVAL_SEC:.1f}s with only the "
-            "latest UWB packet. Press Ctrl+C to stop."
-        )
+        print("[INFO] Move the opposite UWB module. Press Ctrl+C to stop.")
 
-        next_update_ns = time.monotonic_ns()
         while True:
-            wait_until_next_update(next_update_ns)
-            next_update_ns += int(TRACKING_INTERVAL_SEC * 1_000_000_000)
-
-            latest_packet = receive_latest_available_packet(sock)
-            if latest_packet is None:
+            try:
+                data, addr = sock.recvfrom(1024)
+            except socket.timeout:
                 continue
-            data, addr = latest_packet
 
             try:
                 parsed = parse_uwb_packet(data)
@@ -146,6 +102,7 @@ def main():
                     correction_deg,
                     wait=False,
                 )
+
                 print(
                     "[TRACK]\n"
                     f"  relative_deg       : {uwb_relative_deg:.2f}\n"

@@ -5,9 +5,51 @@
 
 실제 짐벌 제어 구현은 `code/gimbal/gimbal_controller_yaw.py`에 있고, 이 폴더의 파일들은 검증/실험용입니다.
 
+## `gimbal_range_test.py`
+
+Yaw 짐벌을 아래 순서로 한 번 움직여 전체 가동 범위를 확인합니다.
+
+```text
+0도 -> +90도 -> -90도 -> 0도
+```
+
+각 위치에서 기본 3초 동안 대기하며, 마지막 0도에 도착하면 PWM 신호와 GPIO
+자원을 정리하고 종료합니다.
+
+```bash
+python tests/gimbal/gimbal_range_test.py
+```
+
+GPIO 핀과 각 위치의 대기 시간을 변경할 수 있습니다.
+
+```bash
+python tests/gimbal/gimbal_range_test.py --yaw-pin 18 --wait 5
+```
+
 ## `gimbal_uwb_tracking_test.py`
 
-UWB UDP 패킷을 수신하고 `GimbalController`를 사용해 yaw 짐벌을 구동하는 테스트 코드입니다.
+QR 인식 없이 UWB UDP 패킷만 사용해 yaw 짐벌을 구동하는 빠른 추적
+테스트 코드입니다. 0.2초마다 소켓에 쌓인 패킷을 비우고 가장 최신 UWB 값
+하나만 짐벌 보정에 사용합니다.
+
+```bash
+python tests/gimbal/gimbal_uwb_tracking_test.py
+```
+
+주요 옵션:
+
+```bash
+python tests/gimbal/gimbal_uwb_tracking_test.py \
+  --host 0.0.0.0 \
+  --port 5005 \
+  --yaw-pin 18 \
+  --initial-deg 0
+```
+
+## `gimbal_uwb_tracking_qr_test.py`
+
+0.2초 주기의 UWB 추적과 QR 인식을 별도 스레드에서 병렬로 수행하고, QR
+결과와 실패 프레임을 저장하는 테스트 코드입니다.
 
 패킷 형식:
 
@@ -20,50 +62,53 @@ UWB UDP 패킷을 수신하고 `GimbalController`를 사용해 yaw 짐벌을 구
 실행:
 
 ```bash
-python tests/gimbal/gimbal_uwb_tracking_test.py
+python tests/gimbal/gimbal_uwb_tracking_qr_test.py
 ```
 
 기본 실행은 `/dev/video4` 카메라를 함께 열고, 유효한 UWB 패킷으로 짐벌을
 보정할 때마다 QR을 검사합니다. QR 결과는 실행별 CSV 파일에 저장됩니다.
 
 ```bash
-result/gimbal_uwb_tracking/run_YYYYMMDD_HHMMSS/qr_results.csv
+result/gimbal_uwb_tracking_qr_test/run_YYYYMMDD_HHMMSS/qr_results.csv
 ```
 
 CSV에는 QR 패턴 인식 여부(`qr_visible`), QR 데이터 디코딩 성공 여부
-(`qr_decoded`), 디코딩된 내용(`qr_data`)만 기록합니다.
+(`qr_decoded`), 디코딩된 내용(`qr_data`), 실패 이미지 경로
+(`failure_frame`)를 기록합니다.
 
 실제 카메라 영상을 함께 확인하려면 `--live-stream`을 사용합니다. 라이브
 화면에는 중심 거리, UWB 상대각, 짐벌 명령각을 표시하지 않습니다.
 
 ```bash
-python tests/gimbal/gimbal_uwb_tracking_test.py --live-stream
+python tests/gimbal/gimbal_uwb_tracking_qr_test.py --live-stream
 ```
 
 주요 옵션:
 
 ```bash
-python tests/gimbal/gimbal_uwb_tracking_test.py \
+python tests/gimbal/gimbal_uwb_tracking_qr_test.py \
   --port 5005 \
   --yaw-pin 18 \
   --initial-deg 0 \
   --qr-device-index 4 \
-  --qr-crop-scale 0.3 \
-  --qr-timeout 0.2
+  --qr-crop-scale 0.3
 ```
 
 저장 상위 경로는 `--output-dir`로 바꿀 수 있습니다.
 
 ```bash
-python tests/gimbal/gimbal_uwb_tracking_test.py \
+python tests/gimbal/gimbal_uwb_tracking_qr_test.py \
   --output-dir result/my_qr_tracking
 ```
 
 UWB 상대각의 절댓값이 코드의
 `UWB_DEADBAND_DEG`보다 작으면 보정하지 않고, 한 패킷에서 적용하는 보정각은
 최대 ±60도로 제한합니다.
-짐벌 보정 직후 `--qr-timeout` 동안 새 카메라 프레임에서 QR을 검사한 다음
-다음 UWB 패킷을 처리합니다.
+짐벌 제어는 QR 결과를 기다리지 않고 0.2초마다 실행되며, 매 제어 시점에
+소켓 버퍼에서 가장 최신 UWB 패킷 하나만 사용합니다. 별도 QR 스레드는 짐벌
+보정 직후부터 다음 보정 시각 전까지 도착한 새 카메라 프레임을 검사합니다.
+QR 디코딩에 실패하면 해당 프레임을 실행 폴더의 `failed_frames/`에 저장하고,
+`qr_results.csv`의 `failure_frame` 열에 이미지의 상대 경로를 함께 기록합니다.
 
 ## `send_fake_uwb_sweep.py`
 

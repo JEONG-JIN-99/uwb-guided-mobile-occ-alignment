@@ -1,5 +1,6 @@
 import sys
 import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 # RPi.GPIO 모듈 Mocking (Windows 등 개발 환경 호환성 확보)
@@ -19,6 +20,80 @@ if CODE_DIR not in sys.path:
 
 from step_controller import GimbalStepController
 from gimbal.gimbal_controller_yaw import GimbalController
+from gimbal_uwb_tracking_qr_test import save_qr_failure_frame
+from gimbal_uwb_tracking_test import (
+    receive_latest_available_packet,
+    receive_latest_packet,
+)
+
+
+class TestReceiveLatestPacket(unittest.TestCase):
+    def test_discards_backlog_and_returns_newest_packet(self):
+        sock = MagicMock()
+        sock.gettimeout.return_value = 0.2
+        sock.recvfrom.side_effect = [
+            (b"oldest", ("127.0.0.1", 5005)),
+            (b"middle", ("127.0.0.1", 5005)),
+            (b"newest", ("127.0.0.1", 5005)),
+            BlockingIOError(),
+        ]
+
+        packet = receive_latest_packet(sock)
+
+        self.assertEqual(packet, (b"newest", ("127.0.0.1", 5005)))
+        sock.setblocking.assert_called_once_with(False)
+        sock.settimeout.assert_called_once_with(0.2)
+
+    def test_returns_none_when_no_packet_is_available(self):
+        sock = MagicMock()
+        sock.gettimeout.return_value = 0.2
+        sock.recvfrom.side_effect = BlockingIOError()
+
+        packet = receive_latest_available_packet(sock)
+
+        self.assertIsNone(packet)
+        sock.setblocking.assert_called_once_with(False)
+        sock.settimeout.assert_called_once_with(0.2)
+
+
+class TestSaveQrFailureFrame(unittest.TestCase):
+    def test_saves_failed_frame_beside_qr_results(self):
+        cv2_module = MagicMock()
+        cv2_module.imwrite.return_value = True
+        qr_result = MagicMock(detected=False, visible=True, frame="frame")
+
+        with patch("pathlib.Path.mkdir") as mkdir:
+            relative_path = save_qr_failure_frame(
+                cv2_module,
+                Path("/tmp/run"),
+                7,
+                qr_result,
+            )
+
+        self.assertEqual(
+            relative_path,
+            "failed_frames/attempt_000007_visible_not_decoded.jpg",
+        )
+        mkdir.assert_called_once_with(parents=True, exist_ok=True)
+        cv2_module.imwrite.assert_called_once_with(
+            "/tmp/run/failed_frames/attempt_000007_visible_not_decoded.jpg",
+            "frame",
+        )
+
+    def test_does_not_save_successful_detection(self):
+        cv2_module = MagicMock()
+        qr_result = MagicMock(detected=True, visible=True, frame="frame")
+
+        relative_path = save_qr_failure_frame(
+            cv2_module,
+            Path("/tmp/run"),
+            1,
+            qr_result,
+        )
+
+        self.assertEqual(relative_path, "")
+        cv2_module.imwrite.assert_not_called()
+
 
 class TestGimbalController(unittest.TestCase):
     def setUp(self):
