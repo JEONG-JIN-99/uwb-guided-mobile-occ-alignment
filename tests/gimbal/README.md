@@ -23,16 +23,47 @@ UWB UDP 패킷을 수신하고 `GimbalController`를 사용해 yaw 짐벌을 구
 python tests/gimbal/gimbal_uwb_tracking_test.py
 ```
 
+기본 실행은 `/dev/video4` 카메라를 함께 열고, 유효한 UWB 패킷으로 짐벌을
+보정할 때마다 QR을 검사합니다. QR 결과는 실행별 CSV 파일에 저장됩니다.
+
+```bash
+result/gimbal_uwb_tracking/run_YYYYMMDD_HHMMSS/qr_results.csv
+```
+
+CSV에는 QR 패턴 인식 여부(`qr_visible`), QR 데이터 디코딩 성공 여부
+(`qr_decoded`), 디코딩된 내용(`qr_data`)만 기록합니다.
+
+실제 카메라 영상을 함께 확인하려면 `--live-stream`을 사용합니다. 라이브
+화면에는 중심 거리, UWB 상대각, 짐벌 명령각을 표시하지 않습니다.
+
+```bash
+python tests/gimbal/gimbal_uwb_tracking_test.py --live-stream
+```
+
 주요 옵션:
 
 ```bash
-python tests/gimbal/gimbal_uwb_tracking_test.py --port 5005 --yaw-pin 18 --initial-deg 0
+python tests/gimbal/gimbal_uwb_tracking_test.py \
+  --port 5005 \
+  --yaw-pin 18 \
+  --initial-deg 0 \
+  --qr-device-index 4 \
+  --qr-crop-scale 0.3 \
+  --qr-timeout 0.2
 ```
 
-기본 동작은 패킷 처리 후 대기하지 않습니다. UWB 상대각의 절댓값이 코드의
+저장 상위 경로는 `--output-dir`로 바꿀 수 있습니다.
+
+```bash
+python tests/gimbal/gimbal_uwb_tracking_test.py \
+  --output-dir result/my_qr_tracking
+```
+
+UWB 상대각의 절댓값이 코드의
 `UWB_DEADBAND_DEG`보다 작으면 보정하지 않고, 한 패킷에서 적용하는 보정각은
 최대 ±60도로 제한합니다.
-대기 중 들어온 오래된 UWB 패킷은 따라가지 않고, 다음 제어 시점에 가장 최신 패킷만 처리합니다.
+짐벌 보정 직후 `--qr-timeout` 동안 새 카메라 프레임에서 QR을 검사한 다음
+다음 UWB 패킷을 처리합니다.
 
 ## `send_fake_uwb_sweep.py`
 

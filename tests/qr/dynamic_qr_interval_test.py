@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""짐벌을 무작위 초기각에 둔 뒤 UWB 정렬 중 QR 인식률을 측정한다."""
+"""짐벌을 무작위 초기각에 둔 뒤 UWB 정렬·안정화 후 QR 인식률을 측정한다."""
 
 import argparse
 import csv
 import random
 import sys
-import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -49,7 +48,7 @@ def build_parser():
         "--interval",
         type=float,
         default=1.0,
-        help="QR detection window immediately after the UWB alignment command (default: 1.0)",
+        help="QR detection window after alignment stabilization (default: 1.0)",
     )
     parser.add_argument(
         "--attempts",
@@ -93,15 +92,15 @@ def build_parser():
         "--alignment-settle-time",
         type=float,
         default=2.0,
-        help="total stabilization time after the UWB alignment command (default: 2.0)",
+        help="stabilization time before QR detection (default: 2.0)",
     )
     parser.add_argument(
         "--servo-drive-time",
         type=float,
-        default=0.4,
+        default=1.0,
         help=(
             "time to keep PWM active after each move before disabling the "
-            "control signal (default: 0.4)"
+            "control signal (default: 1.0)"
         ),
     )
     parser.add_argument(
@@ -365,64 +364,25 @@ def main(argv=None):
                             }
                         )
 
-                        # UWB 정렬 명령 직후 QR을 검사한다. PWM은 정렬 명령 후
-                        # servo_drive_time까지 유지하고, 이후 남은 안정화 시간을 기다린다.
+                        # UWB 정렬 후 먼저 지정 시간 동안 완전히 안정화한다.
+                        # QR 검사는 안정화가 끝난 시점부터 별도의 시간 구간에서 수행한다.
                         gimbal.move_to(command)
-                        alignment_started_ns = time.monotonic_ns()
-                        qr_started_ns = alignment_started_ns
+                        if settle_after_move(
+                            cv2,
+                            scanner,
+                            gimbal,
+                            args.alignment_settle_time,
+                            args.servo_drive_time,
+                            args.keep_pwm_active,
+                            window_name,
+                        ):
+                            stop_requested = True
+
+                        qr_started_ns = time.monotonic_ns()
                         qr_deadline_ns = (
                             qr_started_ns + int(args.interval * 1_000_000_000)
                         )
-                        qr_holder = {}
-
-                        def detect_qr_during_alignment():
-                            try:
-                                qr_holder["result"] = scanner.detect_until(
-                                    qr_deadline_ns
-                                )
-                            except Exception as exc:
-                                qr_holder["error"] = exc
-
-                        qr_thread = threading.Thread(
-                            target=detect_qr_during_alignment,
-                            name="dynamic-qr-detection",
-                        )
-                        qr_thread.start()
-
-                        pwm_disable_ns = (
-                            alignment_started_ns
-                            + int(args.servo_drive_time * 1_000_000_000)
-                        )
-                        pwm_remaining_s = max(
-                            0.0,
-                            (pwm_disable_ns - time.monotonic_ns()) / 1_000_000_000,
-                        )
-                        if show_live_during_wait(
-                            cv2, scanner, pwm_remaining_s, window_name
-                        ):
-                            stop_requested = True
-
-                        if not args.keep_pwm_active:
-                            gimbal.disable_control_signal()
-
-                        alignment_deadline_ns = (
-                            alignment_started_ns
-                            + int(args.alignment_settle_time * 1_000_000_000)
-                        )
-                        settle_remaining_s = max(
-                            0.0,
-                            (alignment_deadline_ns - time.monotonic_ns())
-                            / 1_000_000_000,
-                        )
-                        if show_live_during_wait(
-                            cv2, scanner, settle_remaining_s, window_name
-                        ):
-                            stop_requested = True
-
-                        qr_thread.join()
-                        if "error" in qr_holder:
-                            raise qr_holder["error"]
-                        qr_result = qr_holder["result"]
+                        qr_result = scanner.detect_until(qr_deadline_ns)
 
                         if qr_result.detected:
                             detected_count += 1
