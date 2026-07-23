@@ -11,6 +11,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
 CODE_DIR = os.path.join(PROJECT_ROOT, "code")
 CROP_SCALE = 0.3
+STABILIZATION_TIME_SEC = 3.0
 if CODE_DIR not in sys.path:
     sys.path.insert(0, CODE_DIR)
 
@@ -18,7 +19,8 @@ if CODE_DIR not in sys.path:
 def build_parser():
     parser = argparse.ArgumentParser(
         description=(
-            "Align the yaw gimbal to 0 degrees and disable PWM. Optionally "
+            "Align the yaw gimbal to 0 degrees, wait 3 seconds, and disable PWM. "
+            "Optionally "
             "show the camera view continuously for manual QR placement."
         )
     )
@@ -29,18 +31,7 @@ def build_parser():
         action="store_true",
         help="show the camera view after alignment; omit for headless alignment only",
     )
-    parser.add_argument(
-        "--servo-drive-time",
-        type=float,
-        default=0.6,
-        help="seconds to drive the servo at 0 degrees before disabling PWM",
-    )
     return parser
-
-
-def validate_args(parser, args):
-    if args.servo_drive_time < 0:
-        parser.error("--servo-drive-time must be 0 or greater")
 
 
 def crop_with_alignment_guide(cv2, frame):
@@ -81,7 +72,6 @@ def crop_with_alignment_guide(cv2, frame):
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
-    validate_args(parser, args)
 
     from gimbal.gimbal_controller_yaw import GimbalController
 
@@ -94,10 +84,10 @@ def main(argv=None):
         gimbal = GimbalController(yaw_pin=args.yaw_pin)
         gimbal.move_to(0.0)
         print(
-            f"[GIMBAL] Moving to 0 deg; PWM will turn off after "
-            f"{args.servo_drive_time:g}s."
+            f"[GIMBAL] Moving to 0 deg; waiting "
+            f"{STABILIZATION_TIME_SEC:g}s for stabilization."
         )
-        time.sleep(args.servo_drive_time)
+        time.sleep(STABILIZATION_TIME_SEC)
         gimbal.disable_control_signal()
         print("[GIMBAL] Aligned to 0 deg; PWM control signal is off.")
 
