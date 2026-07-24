@@ -29,6 +29,17 @@ class GPIOGimbalController:
         print("GPIO Gimbal Initialized")
         time.sleep(1.0)
 
+    @staticmethod
+    def uwb_to_ros_yaw(uwb_raw_degree):
+        """UWB의 CW 양수 방위각을 ROS의 CCW 양수 yaw로 변환한다."""
+        return -float(uwb_raw_degree)
+
+    @staticmethod
+    def ros_yaw_to_servo_angle(ros_yaw_degree):
+        """ROS yaw를 현재 장착 방향의 서보 0~180도 각도로 변환한다."""
+        clipped = max(-90.0, min(90.0, float(ros_yaw_degree)))
+        return 90.0 - clipped
+
     def calculate_gps_angles(self, my_pos, target_pos):
         """두 GPS 좌표로부터 목표 compass bearing을 라디안으로 계산한다."""
         my_lat, my_lon = map(math.radians, my_pos)
@@ -62,17 +73,18 @@ class GPIOGimbalController:
         return target_pos[1]
 
     def move_to(self, az_degree):
-        """상대각을 -90~90도로 제한하고 해당 PWM duty를 적용한다."""
+        """ROS yaw를 -90~90도로 제한하고 해당 PWM duty를 적용한다."""
         gimbal_command_deg = max(-90.0, min(90.0, float(az_degree)))
-        target_degree = gimbal_command_deg + 90.0
+        target_degree = self.ros_yaw_to_servo_angle(gimbal_command_deg)
         duty = (target_degree / 18.0) + 2.5
         self.yaw_pwm.ChangeDutyCycle(duty)
         self.current_degree = gimbal_command_deg
         return gimbal_command_deg
 
     def move_by_uwb_relative(self, uwb_relative_degree, wait=True):
-        """UWB 상대각을 이전 명령각에 더해 다음 절대 명령각으로 이동한다."""
-        next_command_deg = self.current_degree + float(uwb_relative_degree)
+        """UWB 원시 상대각을 ROS yaw로 바꿔 이전 명령각에 더한다."""
+        uwb_ros_degree = self.uwb_to_ros_yaw(uwb_relative_degree)
+        next_command_deg = self.current_degree + uwb_ros_degree
         gimbal_command_deg = self.move_to(next_command_deg)
 
         if wait:

@@ -43,15 +43,21 @@ class TestGPIOGimbalController(unittest.TestCase):
 
         self.assertEqual(command, 90.0)
         self.assertEqual(self.gimbal.current_degree, 90.0)
-        self.pwm.ChangeDutyCycle.assert_called_with(12.5)
+        self.pwm.ChangeDutyCycle.assert_called_with(2.5)
 
-    def test_move_by_uwb_relative_accumulates_raw_relative_angle(self):
+    def test_move_by_uwb_relative_converts_raw_angle_to_ros_yaw(self):
         self.gimbal.current_degree = 10.0
 
         command = self.gimbal.move_by_uwb_relative(20.0, wait=False)
 
-        self.assertEqual(command, 30.0)
-        self.pwm.ChangeDutyCycle.assert_called_with(9.166666666666668)
+        self.assertEqual(command, -10.0)
+        self.pwm.ChangeDutyCycle.assert_called_with(8.055555555555555)
+
+    def test_coordinate_conversions(self):
+        self.assertEqual(self.gimbal.uwb_to_ros_yaw(30.0), -30.0)
+        self.assertEqual(self.gimbal.uwb_to_ros_yaw(-30.0), 30.0)
+        self.assertEqual(self.gimbal.ros_yaw_to_servo_angle(30.0), 60.0)
+        self.assertEqual(self.gimbal.ros_yaw_to_servo_angle(-30.0), 120.0)
 
     def test_cleanup_stops_pwm_and_gpio(self):
         self.gimbal.cleanup()

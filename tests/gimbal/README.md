@@ -7,7 +7,9 @@
 
 Tx처럼 PCA9685 없이 BCM GPIO에서 서보 PWM을 직접 출력하는 구현은
 `code/gimbal/gimbal_controller_yaw_gpio.py`의 `GPIOGimbalController`입니다.
-Rx와 이 폴더의 PCA9685 하드웨어 실험은 기존 `GimbalController`를 사용합니다.
+이 컨트롤러도 UWB의 CW 양수 원시각을 ROS의 CCW 양수 yaw로 변환해 내부
+명령각을 관리합니다. Rx와 이 폴더의 PCA9685 하드웨어 실험은 기존
+`GimbalController`를 사용합니다.
 
 ## `gimbal_range_test.py`
 

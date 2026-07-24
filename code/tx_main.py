@@ -261,8 +261,8 @@ def main():
                     f"  uwb_ros_deg         : {uwb_ros_deg:.2f}\n"
                     f"  correction_raw_deg  : {correction_deg:.2f}\n"
                     f"  correction_ros_deg  : {correction_ros_deg:.2f}\n"
-                    f"  prev_gimbal_deg     : {before_command_deg:.2f}\n"
-                    f"  gimbal_command_deg  : {gimbal_command_deg:.2f}\n"
+                    f"  prev_gimbal_ros_deg : {before_command_deg:.2f}\n"
+                    f"  gimbal_ros_deg      : {gimbal_command_deg:.2f}\n"
                     f"  nominal_elapsed_sec: {nominal_elapsed_sec:.3f}\n"
                     f"  actual_elapsed_sec : {actual_elapsed_sec:.3f}"
                 )
