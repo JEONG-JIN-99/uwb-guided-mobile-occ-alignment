@@ -206,6 +206,26 @@ Yaw 1축 서보 모터 제어의 핵심 클래스입니다.
 - `cleanup()`
   - `servo.angle = None`으로 제어 신호를 비활성화합니다.
 
+#### `code/gimbal/gimbal_controller_yaw_gpio.py`
+
+PCA9685 없이 Raspberry Pi GPIO에서 50Hz 소프트웨어 PWM을 직접 생성하는 Tx용
+yaw 컨트롤러입니다. `origin/main`의 직접 GPIO 구현을
+`GPIOGimbalController`라는 별도 이름으로 가져와 PCA9685 컨트롤러와 함께
+사용할 수 있게 했습니다.
+
+- 기본 BCM GPIO 핀은 18번입니다.
+- `tx_main.py`만 이 컨트롤러를 사용합니다.
+- Rx 및 짐벌 카메라 실험은 기존 PCA9685 컨트롤러를 계속 사용합니다.
+- Tx 실행 시 `--yaw-pin`으로 GPIO 핀을 변경할 수 있습니다.
+
+```bash
+python code/tx_main.py \
+  --yaw-pin 18 \
+  --samples 100 \
+  --experiment-id EXPERIMENT_ID \
+  --start-utc EPOCH_SEC
+```
+
 #### `tests/gimbal/step_controller.py`
 
 `GimbalController`를 상속한 단계 이동 실험용/레거시 컨트롤러입니다.

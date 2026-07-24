@@ -4,7 +4,7 @@ import socket
 import threading
 import time
 
-from gimbal.gimbal_controller_yaw import GimbalController
+from gimbal.gimbal_controller_yaw_gpio import GPIOGimbalController
 from logger.result_logger import ResultLogger
 from time_sync.chrony_clock import (
     format_utc_epoch_ns,
@@ -69,8 +69,12 @@ def main():
     )
     parser.add_argument("--host", default="0.0.0.0", help="UDP bind host")
     parser.add_argument("--port", type=int, default=5005, help="UDP bind port")
-    parser.add_argument("--servo-channel", type=int, default=0, help="PCA9685 channel for yaw servo")
-    parser.add_argument("--pca9685-address", type=lambda value: int(value, 0), default=0x40)
+    parser.add_argument(
+        "--yaw-pin",
+        type=int,
+        default=18,
+        help="BCM GPIO pin for the directly connected Tx yaw servo",
+    )
     parser.add_argument(
         "--initial-deg",
         type=float,
@@ -130,10 +134,7 @@ def main():
     )
     print("[SYNC] Chrony synchronization is ready")
 
-    gimbal = GimbalController(
-        servo_channel=args.servo_channel,
-        pca9685_address=args.pca9685_address,
-    )
+    gimbal = GPIOGimbalController(yaw_pin=args.yaw_pin)
 
     # Open the UDP socket only after gimbal initialization so packets cannot
     # accumulate in the socket buffer during the controller's startup delay.
@@ -258,9 +259,10 @@ def main():
                     f"[TRACK] sample {sample_index + 1}/{args.samples}\n"
                     f"  uwb_raw_deg         : {uwb_relative_deg:.2f}\n"
                     f"  uwb_ros_deg         : {uwb_ros_deg:.2f}\n"
+                    f"  correction_raw_deg  : {correction_deg:.2f}\n"
                     f"  correction_ros_deg  : {correction_ros_deg:.2f}\n"
-                    f"  prev_gimbal_ros_deg : {before_command_deg:.2f}\n"
-                    f"  gimbal_ros_deg      : {gimbal_command_deg:.2f}\n"
+                    f"  prev_gimbal_deg     : {before_command_deg:.2f}\n"
+                    f"  gimbal_command_deg  : {gimbal_command_deg:.2f}\n"
                     f"  nominal_elapsed_sec: {nominal_elapsed_sec:.3f}\n"
                     f"  actual_elapsed_sec : {actual_elapsed_sec:.3f}"
                 )
@@ -285,7 +287,7 @@ def main():
         sock.close()
         if receiver_started:
             receiver_thread.join(timeout=1.0)
-        print("[DONE] gimbal returned to 0 deg and PCA9685 control signal disabled")
+        print("[DONE] gimbal returned to 0 deg and GPIO cleaned up")
 
 
 if __name__ == "__main__":
