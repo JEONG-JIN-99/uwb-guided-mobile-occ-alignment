@@ -1,18 +1,29 @@
 import math
 import time
-import RPi.GPIO as GPIO
+
+from adafruit_servokit import ServoKit
 
 # packet set
 # header | distance | azimuth | elevation | latitude | langitude
 #                      방위각     고도각        위도        경도
 
 class GimbalController:
-    def __init__(self, yaw_pin=18):
-        GPIO.setmode(GPIO.BCM)
-        GPIO.setup(yaw_pin, GPIO.OUT)
-        
-        self.yaw_pwm = GPIO.PWM(yaw_pin, 50)
-        self.yaw_pwm.start(7.5)   # 90도 대기
+    def __init__(self, servo_channel=0, pca9685_address=0x40):
+        if not 0 <= servo_channel < 16:
+            raise ValueError("servo_channel must be between 0 and 15")
+        if not 0 <= pca9685_address <= 0x7F:
+            raise ValueError("pca9685_address must be a 7-bit I2C address")
+
+        self.servo_channel = servo_channel
+        self.pca9685_address = pca9685_address
+        self.kit = ServoKit(
+            channels=16,
+            address=pca9685_address,
+            frequency=50,
+        )
+        self.yaw_servo = self.kit.servo[servo_channel]
+        self.yaw_servo.set_pulse_width_range(500, 2500)
+        self.yaw_servo.angle = 90.0
 
         # 현재 짐벌의 마지막 명령각을 저장 (-90~90도, 초기값 0도)
         self.current_degree = 0.0
@@ -108,7 +119,7 @@ class GimbalController:
         # 디버깅 표시용 각도는 -90~90도 기준으로 사용
         input_az_degree = az_degree
 
-        # 짐벌 명령각은 기준 7.5 PWM을 0도로 보는 -90~90도 범위로 제한한다.
+        # 짐벌 명령각은 중앙 90도를 0도로 보는 -90~90도 범위로 제한한다.
         if input_az_degree < -90:
             gimbal_command_deg = -90
         elif input_az_degree > 90:
@@ -116,7 +127,6 @@ class GimbalController:
         else:
             gimbal_command_deg = input_az_degree
 
-        current_az_degree = self.current_degree
         target_degree = gimbal_command_deg + 90.0
 
         # # [핵심 수정] 기어 반전 적용
@@ -124,10 +134,8 @@ class GimbalController:
         # # 반대로 도는 모터는 (180 - 120) = 60도 지점으로 명령을 내려야 합니다.
         # motor_target_degree = 180.0 - target_degree
 
-        # 3. PWM 적용
-        # 반대반향 회전 기어를 고려한 듀티 사이클 계산
-        duty = (target_degree / 18.0) + 2.5
-        self.yaw_pwm.ChangeDutyCycle(duty)
+        # 3. PCA9685에 ServoKit 기준 0~180도 각도를 적용
+        self.yaw_servo.angle = target_degree
 
         # 4. 마지막 명령 위치를 목표 위치로 갱신
         self.current_degree = gimbal_command_deg
@@ -139,7 +147,7 @@ class GimbalController:
         UWB가 내는 현재 바라보는 방향 기준 상대각을 받아 짐벌 절대 명령각으로 변환해 이동한다.
 
         예: 마지막 짐벌 명령각이 10도이고 UWB 상대각이 20도이면 move_to(30)을 실행한다.
-        반환값은 실제로 명령된 기준 7.5 PWM 상대각(gimbal_command_deg)이다.
+        반환값은 실제로 명령된 중앙 90도 기준 상대각(gimbal_command_deg)이다.
         """
         next_command_deg = self.current_degree + uwb_relative_degree
         gimbal_command_deg = self.move_to(next_command_deg)
@@ -150,17 +158,15 @@ class GimbalController:
         return gimbal_command_deg
 
     def disable_control_signal(self):
-        """PWM 제어 펄스를 끄되 GPIO와 현재 명령각 상태는 유지한다.
+        """PCA9685 제어 펄스를 끄되 현재 명령각 상태는 유지한다.
 
-        서보가 목표 위치에 도달한 뒤 발생하는 소프트웨어 PWM 지터를 비교
-        시험할 때 사용한다. 제어 펄스를 끄면 서보의 유지 토크도 사라지므로
-        외력이나 하중이 크면 실제 각도가 처질 수 있다.
+        제어 펄스를 끄면 서보의 유지 토크도 사라지므로 외력이나 하중이
+        크면 실제 각도가 처질 수 있다.
         """
-        self.yaw_pwm.ChangeDutyCycle(0)
+        self.yaw_servo.angle = None
 
     def cleanup(self):
-        self.yaw_pwm.stop()
-        GPIO.cleanup()
+        self.disable_control_signal()
 
 if __name__ == "__main__":
     gimbal = GimbalController()

@@ -3,7 +3,9 @@
 
 import argparse
 import csv
+import math
 import random
+import socket
 import sys
 import time
 from datetime import datetime
@@ -12,10 +14,8 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CODE_DIR = PROJECT_ROOT / "code"
-TEST_QR_DIR = Path(__file__).resolve().parent
-for path in (str(CODE_DIR), str(TEST_QR_DIR)):
-    if path not in sys.path:
-        sys.path.insert(0, path)
+if str(CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(CODE_DIR))
 
 
 RESULT_FIELDS = (
@@ -27,6 +27,75 @@ RESULT_FIELDS = (
     "qr_visible",
     "qr_detected",
 )
+
+
+def normalize_angle(angle_deg):
+    """각도를 [-180, 180) 범위로 정규화한다."""
+    return (float(angle_deg) + 180.0) % 360.0 - 180.0
+
+
+def estimate_tx_azimuth(initial_gimbal_deg, uwb_relative_azimuth_deg):
+    return normalize_angle(initial_gimbal_deg + uwb_relative_azimuth_deg)
+
+
+def clamp_servo_command(requested_deg, min_deg, max_deg):
+    if min_deg > max_deg:
+        raise ValueError("servo minimum angle must not exceed maximum angle")
+    applied = min(max(float(requested_deg), float(min_deg)), float(max_deg))
+    return applied, applied != float(requested_deg)
+
+
+def parse_uwb_packet(data):
+    message = data.decode("utf-8").strip()
+    parts = message.split(",")
+    if len(parts) < 4 or parts[0] != "1":
+        return None
+    distance, azimuth, elevation = map(float, parts[1:4])
+    if not all(math.isfinite(value) for value in (distance, azimuth, elevation)):
+        return None
+    if not -180.0 <= azimuth < 180.0:
+        return None
+    return distance, azimuth, elevation
+
+
+class UwbReceiver:
+    def __init__(self, host, port):
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.socket.bind((host, int(port)))
+        self.socket.setblocking(False)
+
+    def discard_pending(self):
+        while True:
+            try:
+                self.socket.recvfrom(4096)
+            except BlockingIOError:
+                return
+
+    def receive_first_valid(self, timeout_s):
+        deadline_ns = time.monotonic_ns() + int(timeout_s * 1_000_000_000)
+        self.socket.setblocking(True)
+        try:
+            while True:
+                remaining_s = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+                if remaining_s <= 0:
+                    return None
+                self.socket.settimeout(remaining_s)
+                try:
+                    data, address = self.socket.recvfrom(4096)
+                except socket.timeout:
+                    return None
+                received_ns = time.monotonic_ns()
+                try:
+                    parsed = parse_uwb_packet(data)
+                except (UnicodeDecodeError, ValueError):
+                    continue
+                if parsed is not None:
+                    return parsed, received_ns, address
+        finally:
+            self.socket.setblocking(False)
+
+    def close(self):
+        self.socket.close()
 
 
 def build_parser():
@@ -63,7 +132,8 @@ def build_parser():
         help="camera warmup after its capture thread starts (default: 1.0)",
     )
     parser.add_argument("--live-stream", action="store_true")
-    parser.add_argument("--yaw-pin", type=int, default=18)
+    parser.add_argument("--servo-channel", type=int, default=0)
+    parser.add_argument("--pca9685-address", type=lambda value: int(value, 0), default=0x40)
     parser.add_argument(
         "--initial-min",
         type=int,
@@ -235,13 +305,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     validate_args(parser, args)
 
-    from experiment.static_alignment.angle_utils import (
-        clamp_servo_command,
-        estimate_tx_azimuth,
-    )
-    from experiment.static_alignment.devices import UwbReceiver
     from gimbal.gimbal_controller_yaw import GimbalController
-    from realsense_scanner import HardwareScanner
+    from qr.realsense_scanner import HardwareScanner
 
     import cv2 as cv2_module
 
@@ -281,7 +346,10 @@ def main(argv=None):
     stop_requested = False
 
     try:
-        gimbal = GimbalController(yaw_pin=args.yaw_pin)
+        gimbal = GimbalController(
+            servo_channel=args.servo_channel,
+            pca9685_address=args.pca9685_address,
+        )
         uwb = UwbReceiver(args.uwb_host, args.uwb_port)
         scanner = HardwareScanner(
             device_index=args.device_index,

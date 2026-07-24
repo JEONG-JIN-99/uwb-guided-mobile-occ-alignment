@@ -12,20 +12,23 @@ if code_dir not in sys.path:
 from gimbal.gimbal_controller_yaw import GimbalController
 
 class GimbalStepController(GimbalController):
-    def __init__(self, yaw_pin=18):
+    def __init__(self, servo_channel=0, pca9685_address=0x40):
         """
-        GimbalController를 상속받아 초기 정렬을 정북방향 0도(물리각도 90도, duty 7.5)로 설정하는 컨트롤러
+        초기 정렬을 정북방향 0도(ServoKit 각도 90도)로 설정한다.
         """
-        super().__init__(yaw_pin)
+        super().__init__(
+            servo_channel=servo_channel,
+            pca9685_address=pca9685_address,
+        )
         # 초기 정렬: 정북방향 0도 (물리 각도 90도)
         self.current_degree = 0.0
-        self.yaw_pwm.ChangeDutyCycle(7.5)
+        self.yaw_servo.angle = 90.0
 
     def step_move_by_data(self, mode, **kwargs):
         """
         gps 혹은 uwb 데이터를 받아 회전 방향(시계/반시계)을 결정한 뒤,
-        시계방향(타겟 각도 > 0)이면 duty를 0.1씩 증가시켜 12.5(상대 각도 90도)까지,
-        반시계방향(타겟 각도 < 0)이면 duty를 0.1씩 감소시켜 2.5(상대 각도 -90도)까지 구동하는 함수.
+        시계방향이면 ServoKit 각도를 1.8도씩 증가시켜 상대각 +90도까지,
+        반시계방향이면 1.8도씩 감소시켜 상대각 -90도까지 구동한다.
         """
         direction = 0  # 1: 시계방향, -1: 반시계방향, 0: 유지
 
@@ -52,38 +55,42 @@ class GimbalStepController(GimbalController):
                 elif azimuth < 0:
                     direction = -1 # 반시계방향
 
-        # 현재 상대 각도(-90~90도)로부터 duty 계산
-        current_duty = ((self.current_degree + 90.0) / 18.0) + 2.5
+        current_servo_angle = self.current_degree + 90.0
+        step_deg = 1.8
 
         if direction == 1:
-            # 시계방향으로 12.5(상대각도 90도)까지 0.1씩 조정
-            target_duty = 12.5
-            while current_duty < target_duty - 1e-9:
-                current_duty = round(min(current_duty + 0.1, target_duty), 10)
-                self.yaw_pwm.ChangeDutyCycle(current_duty)
+            target_servo_angle = 180.0
+            while current_servo_angle < target_servo_angle - 1e-9:
+                current_servo_angle = round(
+                    min(current_servo_angle + step_deg, target_servo_angle),
+                    10,
+                )
+                self.yaw_servo.angle = current_servo_angle
                 time.sleep(0.02)
         elif direction == -1:
-            # 반시계방향으로 2.5(상대각도 -90도)까지 0.1씩 조정
-            target_duty = 2.5
-            while current_duty > target_duty + 1e-9:
-                current_duty = round(max(current_duty - 0.1, target_duty), 10)
-                self.yaw_pwm.ChangeDutyCycle(current_duty)
+            target_servo_angle = 0.0
+            while current_servo_angle > target_servo_angle + 1e-9:
+                current_servo_angle = round(
+                    max(current_servo_angle - step_deg, target_servo_angle),
+                    10,
+                )
+                self.yaw_servo.angle = current_servo_angle
                 time.sleep(0.02)
 
         # 최종 상대 각도 갱신
-        self.current_degree = ((current_duty - 2.5) * 18.0) - 90.0
+        self.current_degree = current_servo_angle - 90.0
         return self.current_degree
 
 if __name__ == "__main__":
     print("=== GimbalStepController 단독 실행 데모 ===")
     
-    # 짐벌 객체 생성 (GPIO 초기 정렬 0도/물리 90도 시작)
-    controller = GimbalStepController(yaw_pin=18)
+    # 짐벌 객체 생성 (PCA9685 채널 0, 초기 상대각 0도)
+    controller = GimbalStepController(servo_channel=0, pca9685_address=0x40)
     
     try:
         # 1. 시계방향 테스트 (GPS 모사)
         # 내 위치 기준 동쪽에 타겟이 위치하는 상황 -> 시계방향 회전
-        print("\n[테스트 1] 시계방향 회전 시작 (+90도 방향으로 duty 0.1씩 조절)")
+        print("\n[테스트 1] 시계방향 회전 시작 (+90도 방향으로 1.8도씩 조절)")
         my_pos = (35.134761, 129.102698)
         target_pos = (35.135145, 129.103154) # 약 +45도
         #target_pos = (35.135014, 129.102441) # 약 -45도
@@ -93,7 +100,7 @@ if __name__ == "__main__":
         
         # 2. 반시계방향 테스트 (UWB 모사)
         # UWB 방위각 음수값 수신 -> 반시계방향 회전
-        print("\n[테스트 2] 반시계방향 회전 시작 (-90도 방향으로 duty 0.1씩 조절)")
+        print("\n[테스트 2] 반시계방향 회전 시작 (-90도 방향으로 1.8도씩 조절)")
         controller.step_move_by_data('uwb', azimuth=-30.0)
         print(f"회전 완료 - 현재 상대 각도: {controller.current_degree:.2f}도")
         time.sleep(2.0)

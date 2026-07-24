@@ -73,7 +73,8 @@ def build_parser(node_id):
     )
     parser.add_argument("--host", default="0.0.0.0", help="UDP bind host")
     parser.add_argument("--port", type=int, default=5005, help="UDP bind port")
-    parser.add_argument("--yaw-pin", type=int, default=18, help="BCM GPIO pin for yaw servo")
+    parser.add_argument("--servo-channel", type=int, default=0, help="PCA9685 channel for yaw servo")
+    parser.add_argument("--pca9685-address", type=lambda value: int(value, 0), default=0x40)
     parser.add_argument(
         "--initial-deg",
         type=float,
@@ -145,7 +146,10 @@ def run_packet_immediate_experiment(node_id):
     )
     print("[SYNC] Chrony synchronization is ready")
 
-    gimbal = GimbalController(yaw_pin=args.yaw_pin)
+    gimbal = GimbalController(
+        servo_channel=args.servo_channel,
+        pca9685_address=args.pca9685_address,
+    )
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((args.host, args.port))
@@ -280,4 +284,4 @@ def run_packet_immediate_experiment(node_id):
         sock.close()
         if receiver_started:
             receiver_thread.join(timeout=1.0)
-        print("[DONE] gimbal returned to 0 deg and GPIO cleaned up")
+        print("[DONE] gimbal returned to 0 deg and PCA9685 control signal disabled")

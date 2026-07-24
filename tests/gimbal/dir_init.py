@@ -25,7 +25,12 @@ def build_parser():
         )
     )
     parser.add_argument("--device-index", type=int, default=4)
-    parser.add_argument("--yaw-pin", type=int, default=18)
+    parser.add_argument("--servo-channel", type=int, default=0)
+    parser.add_argument(
+        "--pca9685-address",
+        type=lambda value: int(value, 0),
+        default=0x40,
+    )
     parser.add_argument(
         "--live-stream",
         action="store_true",
@@ -81,7 +86,10 @@ def main(argv=None):
     camera = None
 
     try:
-        gimbal = GimbalController(yaw_pin=args.yaw_pin)
+        gimbal = GimbalController(
+            servo_channel=args.servo_channel,
+            pca9685_address=args.pca9685_address,
+        )
         gimbal.move_to(0.0)
         print(
             f"[GIMBAL] Moving to 0 deg; waiting "
@@ -131,7 +139,7 @@ def main(argv=None):
             cv2.destroyAllWindows()
         if gimbal is not None:
             gimbal.cleanup()
-        print("[CLEANUP] Camera, window, PWM, and GPIO resources released.")
+        print("[CLEANUP] Camera, window, and PCA9685 servo resources released.")
 
 
 if __name__ == "__main__":

@@ -28,7 +28,12 @@ def build_parser():
             "start/target angle pairs."
         )
     )
-    parser.add_argument("--yaw-pin", type=int, default=18)
+    parser.add_argument("--servo-channel", type=int, default=0)
+    parser.add_argument(
+        "--pca9685-address",
+        type=lambda value: int(value, 0),
+        default=0x40,
+    )
     return parser
 
 
@@ -53,7 +58,10 @@ def main(argv=None):
     print("측정 종료 Enter를 누르는 즉시 PWM 신호를 끕니다.")
 
     try:
-        gimbal = GimbalController(yaw_pin=args.yaw_pin)
+        gimbal = GimbalController(
+            servo_channel=args.servo_channel,
+            pca9685_address=args.pca9685_address,
+        )
 
         for number, (start_deg, target_deg) in enumerate(ALIGNMENT_TRIALS, start=1):
             print(
@@ -93,7 +101,7 @@ def main(argv=None):
     finally:
         if gimbal is not None:
             gimbal.cleanup()
-        print("[CLEANUP] PWM과 GPIO 자원을 해제했습니다.")
+        print("[CLEANUP] PCA9685 서보 제어 신호를 비활성화했습니다.")
 
 
 if __name__ == "__main__":

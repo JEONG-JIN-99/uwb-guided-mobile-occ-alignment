@@ -20,10 +20,16 @@ def build_parser():
         description="Move the yaw gimbal through 0, +90, -90, and back to 0 degrees."
     )
     parser.add_argument(
-        "--yaw-pin",
+        "--servo-channel",
         type=int,
-        default=18,
-        help="BCM GPIO pin for the yaw servo (default: 18)",
+        default=0,
+        help="PCA9685 channel for the yaw servo (default: 0)",
+    )
+    parser.add_argument(
+        "--pca9685-address",
+        type=lambda value: int(value, 0),
+        default=0x40,
+        help="PCA9685 I2C address (default: 0x40)",
     )
     parser.add_argument(
         "--wait",
@@ -45,7 +51,10 @@ def main(argv=None):
     gimbal = None
 
     try:
-        gimbal = GimbalController(yaw_pin=args.yaw_pin)
+        gimbal = GimbalController(
+            servo_channel=args.servo_channel,
+            pca9685_address=args.pca9685_address,
+        )
         print("[START] Gimbal range test: 0 -> +90 -> -90 -> 0 degrees")
 
         for step, target_deg in enumerate(TEST_ANGLES_DEG, start=1):
@@ -63,7 +72,7 @@ def main(argv=None):
     finally:
         if gimbal is not None:
             gimbal.cleanup()
-        print("[CLEANUP] PWM and GPIO resources released.")
+        print("[CLEANUP] PCA9685 servo control signal disabled.")
 
 
 if __name__ == "__main__":

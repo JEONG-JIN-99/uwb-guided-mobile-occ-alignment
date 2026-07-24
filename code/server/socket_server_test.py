@@ -26,7 +26,7 @@ PHONE_IP = "192.168.0.6"
 PHONE_PORT = "8080"
 
 # 짐벌 객체 생성
-gimbal = GimbalController(yaw_pin=18)
+gimbal = GimbalController(servo_channel=0, pca9685_address=0x40)
 
 # 소켓 설정
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
