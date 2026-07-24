@@ -104,9 +104,12 @@ try:
             if header == "1": # UWB 모드
                 mode_name = "UWB"
                 dist, az, el = map(float, parts[1:4])
-                yaw = az 
-                gimbal_command_deg = gimbal.move_to(yaw)
-                print(f"[UWB] Target Az: {az} | gimbal_command_deg: {gimbal_command_deg:.2f}°")
+                yaw_ros_deg = gimbal.uwb_to_ros_yaw(az)
+                gimbal_command_deg = gimbal.move_to(yaw_ros_deg)
+                print(
+                    f"[UWB] raw={az:.2f}°, ROS={yaw_ros_deg:.2f}°, "
+                    f"gimbal_ros={gimbal_command_deg:.2f}°"
+                )
 
             else: # GPS 모드
                 mode_name = "GPS"
@@ -115,7 +118,8 @@ try:
                 gps_read_time_ns = int(parts[6])
 
                 yaw = gimbal.calculate_gps_angles(my_pos, target_pos)
-                gimbal_command_deg = gimbal.move_to(math.degrees(yaw))
+                yaw_ros_deg = -math.degrees(yaw)
+                gimbal_command_deg = gimbal.move_to(yaw_ros_deg)
                 print(f"[GPS] Target Yaw: {yaw}° | gimbal_command_deg: {gimbal_command_deg:.2f}°")
 
                 # 참고: 데이터 송신부터 수신까지의 지연 시간 (이건 백그라운드 수신 기준이므로 그대로 써도 됨)

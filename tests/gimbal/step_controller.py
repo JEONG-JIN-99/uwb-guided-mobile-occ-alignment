@@ -39,9 +39,9 @@ class GimbalStepController(GimbalController):
                 # 0도(정북) 기준 상대 각도 구하기
                 relative_rad = self.get_rotation_angle(my_pos, target_pos, 0.0)
                 if relative_rad > 0:
-                    direction = 1  # 시계방향
+                    direction = -1  # 시계방향 -> ROS yaw 음수
                 elif relative_rad < 0:
-                    direction = -1 # 반시계방향
+                    direction = 1  # 반시계방향 -> ROS yaw 양수
         elif mode.lower() == 'uwb':
             azimuth = kwargs.get('azimuth')
             if azimuth is None and 'target_pos' in kwargs:
@@ -51,23 +51,14 @@ class GimbalStepController(GimbalController):
             
             if azimuth is not None:
                 if azimuth > 0:
-                    direction = 1  # 시계방향
+                    direction = -1  # UWB CW 양수 -> ROS yaw 음수
                 elif azimuth < 0:
-                    direction = -1 # 반시계방향
+                    direction = 1  # UWB CCW 음수 -> ROS yaw 양수
 
-        current_servo_angle = self.current_degree + 90.0
+        current_servo_angle = 90.0 - self.current_degree
         step_deg = 1.8
 
         if direction == 1:
-            target_servo_angle = 180.0
-            while current_servo_angle < target_servo_angle - 1e-9:
-                current_servo_angle = round(
-                    min(current_servo_angle + step_deg, target_servo_angle),
-                    10,
-                )
-                self.yaw_servo.angle = current_servo_angle
-                time.sleep(0.02)
-        elif direction == -1:
             target_servo_angle = 0.0
             while current_servo_angle > target_servo_angle + 1e-9:
                 current_servo_angle = round(
@@ -76,9 +67,18 @@ class GimbalStepController(GimbalController):
                 )
                 self.yaw_servo.angle = current_servo_angle
                 time.sleep(0.02)
+        elif direction == -1:
+            target_servo_angle = 180.0
+            while current_servo_angle < target_servo_angle - 1e-9:
+                current_servo_angle = round(
+                    min(current_servo_angle + step_deg, target_servo_angle),
+                    10,
+                )
+                self.yaw_servo.angle = current_servo_angle
+                time.sleep(0.02)
 
         # 최종 상대 각도 갱신
-        self.current_degree = current_servo_angle - 90.0
+        self.current_degree = 90.0 - current_servo_angle
         return self.current_degree
 
 if __name__ == "__main__":

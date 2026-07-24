@@ -56,18 +56,20 @@ header,distance,azimuth,elevation,...
 
 1. UDP 수신 버퍼에 쌓인 패킷을 모두 읽는다.
 2. 오래된 패킷은 버리고 가장 최신 패킷 하나만 선택한다.
-3. header가 `1`인 패킷에서 UWB 상대 방위각을 읽는다.
-4. 한 주기의 보정각을 `-60도~+60도`로 제한한다.
-5. 이전 짐벌 명령각에 보정각을 더한다.
-6. 최종 짐벌 명령각을 `-90도~+90도`로 제한한다.
-7. PCA9685를 통해 새로운 각도를 서보에 명령한다.
+3. header가 `1`인 패킷에서 CW 양수인 UWB 원시 상대 방위각을 읽는다.
+4. UWB 원시각의 부호를 반전해 CCW 양수인 ROS yaw로 변환한다.
+5. 한 주기의 ROS 보정각을 `-60도~+60도`로 제한한다.
+6. 이전 ROS 짐벌 명령각에 ROS 보정각을 더한다.
+7. 최종 ROS 짐벌 명령각을 `-90도~+90도`로 제한한다.
+8. ROS yaw를 ServoKit 각도로 반전 변환해 PCA9685에 명령한다.
 
 각도 계산은 다음과 같다.
 
 ```text
-주기별 보정각 = UWB 상대 방위각을 -60도 이상 +60도 이하로 제한
-새 짐벌 명령각 = 이전 짐벌 명령각 + 주기별 보정각
-최종 명령각 = 새 짐벌 명령각을 -90도 이상 +90도 이하로 제한
+UWB ROS 상대각 = -UWB 원시 상대각
+주기별 보정각 = UWB ROS 상대각을 -60도 이상 +60도 이하로 제한
+새 ROS 짐벌각 = 이전 ROS 짐벌각 + 주기별 보정각
+ServoKit 각도 = 90도 - 최종 ROS 짐벌각
 ```
 
 예:
@@ -84,11 +86,13 @@ UWB 패킷이 없는 주기에는 짐벌 명령과 QR 작업을 생성하지 않
 
 각 UWB 정렬 명령 직후 QR 작업을 별도 스레드에 전달한다.
 
-- QR 인식 마감 시각은 다음 짐벌 제어 주기가 시작되는 시각이다.
-- 따라서 각 QR 인식 구간은 최대 약 0.2초다.
+- QR 인식 구간은 `--qr-recognition-time`으로 지정하며 기본값은 1초다.
 - QR 작업 큐의 크기는 1이다.
 - 이전 QR 작업이 끝나지 않았다면 새 QR 작업은 건너뛴다.
 - QR 인식 때문에 짐벌의 0.2초 추적 주기가 직접 정지하지 않는다.
+
+기본 설정에서는 짐벌이 약 5번 정렬되는 동안 QR 작업 하나가 최대 1초간
+실행된다. QR 작업이 진행 중인 정렬 시점에는 새 QR 작업이 건너뛰어진다.
 
 QR 결과는 다음과 같이 분류된다.
 
@@ -98,7 +102,8 @@ QR 결과는 다음과 같이 분류된다.
 | `qr_visible=1`, `qr_decoded=0` | QR 형태는 보이지만 디코딩하지 못함 |
 | `qr_visible=0`, `qr_decoded=0` | QR을 찾지 못함 |
 
-QR 디코딩에 실패하면 해당 프레임을 `failed_frames/`에 저장한다.
+기본적으로 QR 디코딩에 실패해도 JPEG 프레임은 저장하지 않는다. 실패 프레임이
+필요한 실험에서만 `--save-failure-frames`를 지정한다.
 
 ### 4. 종료 처리
 
@@ -131,6 +136,7 @@ python tests/gimbal/gimbal_uwb_tracking_qr_test.py
 | RealSense 장치 번호 | 4 (`/dev/video4`) |
 | QR 중앙 crop 비율 | 0.3 |
 | 카메라 준비 시간 | 1초 |
+| QR 인식 시간 | 1초 |
 | 실시간 영상 | 사용하지 않음 |
 
 ## 전체 옵션 실행 예시
@@ -144,7 +150,8 @@ python tests/gimbal/gimbal_uwb_tracking_qr_test.py \
   --initial-deg 0 \
   --qr-device-index 4 \
   --qr-crop-scale 0.3 \
-  --camera-warmup 1
+  --camera-warmup 1 \
+  --qr-recognition-time 1
 ```
 
 ## 실시간 영상 표시
@@ -153,6 +160,26 @@ python tests/gimbal/gimbal_uwb_tracking_qr_test.py \
 python tests/gimbal/gimbal_uwb_tracking_qr_test.py \
   --live-stream
 ```
+
+## 실패 프레임 저장 설정
+
+기본 실행은 실패 프레임을 저장하지 않으므로 Live-stream과 함께 다음처럼
+실행하면 JPEG 디스크 쓰기 없이 실험할 수 있다.
+
+```bash
+python tests/gimbal/gimbal_uwb_tracking_qr_test.py \
+  --live-stream
+```
+
+실패 프레임을 저장하려면 명시적으로 옵션을 켠다.
+
+```bash
+python tests/gimbal/gimbal_uwb_tracking_qr_test.py \
+  --save-failure-frames
+```
+
+프레임 저장 여부와 관계없이 `qr_results.csv`는 계속 저장된다. 저장을 켜지
+않으면 실패 행의 `failure_frame` 필드는 빈 문자열로 기록된다.
 
 ## 초기 짐벌각 지정
 
@@ -214,8 +241,10 @@ result/my_tracking_test/
 | `--qr-device-index` | QR 카메라 V4L2 장치 번호 |
 | `--qr-crop-scale` | QR 탐지에 사용할 중앙 영상 비율, `0` 초과 `1` 이하 |
 | `--camera-warmup` | 카메라 캡처 시작 후 준비 시간 |
+| `--qr-recognition-time` | 각 QR 작업이 인식을 시도하는 시간 |
 | `--output-dir` | 실행별 결과가 저장될 상위 디렉터리 |
 | `--live-stream` | QR 카메라 실시간 영상 표시 |
+| `--save-failure-frames`, `--no-save-failure-frames` | 실패 프레임 JPEG 저장 켜기/끄기 |
 
 ## 종료
 

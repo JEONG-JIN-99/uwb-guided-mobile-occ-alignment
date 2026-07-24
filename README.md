@@ -196,9 +196,9 @@ Yaw 1축 서보 모터 제어의 핵심 클래스입니다.
 - `calculate_uwb_angles(my_pos, target_pos)`
   - UWB 타겟 데이터에서 azimuth 값을 그대로 yaw로 사용하는 단순 함수입니다.
 - `move_to(az_degree)`
-  - `-90~90도` 기준의 짐벌 명령각을 입력받아 서보 물리각 `0~180도`로 매핑합니다.
-  - 명령각 0도는 서보 90도, -90도는 서보 0도, +90도는 서보 180도로 해석합니다.
-  - 상대각 `-90~90°`를 ServoKit 각도 `0~180°`로 변환합니다.
+  - ROS yaw `-90~90도`를 입력받으며 양수는 반시계방향입니다.
+  - 명령각 0도는 서보 90도, -90도(CW)는 서보 180도, +90도(CCW)는 서보 0도로 해석합니다.
+  - UWB의 CW 양수 방위각은 부호를 반전해 ROS yaw로 변환합니다.
   - 반환값은 실제로 짐벌에 명령한 `gimbal_command_deg`입니다.
 - `move_by_uwb_relative(uwb_relative_degree, wait=True)`
   - UWB가 준 현재 방향 기준 상대각을 이전 짐벌 명령각에 더해 다음 짐벌 명령각으로 변환합니다.
@@ -213,7 +213,7 @@ Yaw 1축 서보 모터 제어의 핵심 클래스입니다.
 - 목표 각도로 바로 이동하지 않고, 방향만 판단해서 ServoKit 각도를 1.8도씩 증가/감소시킵니다.
 - GPS 모드에서는 `get_rotation_angle()`로 상대 방향을 판단합니다.
 - UWB 모드에서는 azimuth 부호로 회전 방향을 판단합니다.
-- 최종적으로 시계방향이면 ServoKit 180도, 반시계방향이면 0도까지 이동합니다.
+- 최종적으로 시계방향(ROS 음수)이면 ServoKit 180도, 반시계방향(ROS 양수)이면 0도까지 이동합니다.
 
 #### `tests/gimbal/dir_init.py`
 
@@ -252,7 +252,7 @@ UWB 센서 클래스 자리만 정의되어 있습니다.
 
 ### 6. QR / 비전 코드
 
-#### `code/qr/scanner.py`
+#### `code/camera/scanner.py`
 
 스마트폰 IP Webcam 영상을 읽어 QR을 탐지하는 기본 스캐너입니다.
 
@@ -262,7 +262,7 @@ UWB 센서 클래스 자리만 정의되어 있습니다.
 - QR 중심과 카메라 화면 중심 사이의 유클리드 픽셀 거리를 계산합니다.
 - `run()`은 실시간으로 프레임을 계속 읽으며 QR 탐지를 수행합니다.
 
-#### `code/qr/one_shot_scanner.py`
+#### `code/camera/one_shot_scanner.py`
 
 QR을 한 번 탐지하거나 timeout이 지나면 반환하는 실험용 스캐너입니다.
 
@@ -271,7 +271,7 @@ QR을 한 번 탐지하거나 timeout이 지나면 반환하는 실험용 스캐
 - 반환값은 `{"type": ..., "data": ..., "distance_px": ...}`입니다.
 - 탐색 중 원본 프레임과 crop 프레임을 `result/<실험 코드>/detect_frame/`에 JPG로 저장합니다.
 
-#### `code/qr/dist.py`
+#### `code/camera/dist.py`
 
 QR 중심 거리 계산을 시각적으로 확인하는 독립 실행 테스트입니다.
 
@@ -279,7 +279,7 @@ QR 중심 거리 계산을 시각적으로 확인하는 독립 실행 테스트�
 - OpenCV 창으로 실시간 확인할 수 있습니다.
 - QR 중심과 화면 중심 사이의 거리(px)를 표시합니다.
 
-#### `code/qr/ipwebcam_test.py`
+#### `code/camera/ipwebcam_test.py`
 
 IP Webcam 연결과 QR 인식 여부만 간단히 확인하는 테스트 코드입니다.
 
@@ -287,14 +287,14 @@ IP Webcam 연결과 QR 인식 여부만 간단히 확인하는 테스트 코드�
 - QR 데이터가 바뀔 때만 터미널에 출력합니다.
 - 거리 계산이나 시각화는 최소화되어 있습니다.
 
-#### `code/qr/scale_test.py`
+#### `code/camera/scale_test.py`
 
 중앙 crop/확대 배율을 적용한 QR 인식 테스트 코드입니다.
 
 - `scanner.py`와 비슷하지만 OpenCV 창에 crop된 화면과 QR 가이드 시각화를 보여줍니다.
 - crop 비율에 따른 QR 인식 가능성을 확인할 때 사용합니다.
 
-#### `code/qr/test.py`
+#### `code/camera/test.py`
 
 QR 거리 측정과 시각화 테스트 코드입니다.
 
@@ -359,7 +359,7 @@ QR 거리 측정과 시각화 테스트 코드입니다.
 
 #### `__init__.py` 파일들
 
-`code/client`, `code/server`, `code/gimbal`, `code/gps`, `code/qr`, `code/uwb`, `code/logger` 패키지 구성을 위한 파일입니다.
+`code/client`, `code/server`, `code/gimbal`, `code/gps`, `code/camera`, `code/uwb`, `code/logger` 패키지 구성을 위한 파일입니다.
 
 - 대부분 내용은 비어 있습니다.
 - Python이 각 폴더를 패키지로 인식하도록 돕습니다.

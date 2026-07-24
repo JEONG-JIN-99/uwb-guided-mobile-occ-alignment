@@ -21,22 +21,22 @@ servo.set_pulse_width_range(500, 2500)
 
 def move_to_relative_angle(relative_angle: int) -> None:
     """
-    사용자 기준 각도 -90~+90도를
+    ROS yaw 기준 각도 -90~+90도를
     ServoKit 기준 0~180도로 변환한다.
 
-    사용자 -90도 -> ServoKit 0도
-    사용자   0도 -> ServoKit 90도
-    사용자 +90도 -> ServoKit 180도
+    ROS -90도(CW)  -> ServoKit 180도
+    ROS   0도      -> ServoKit 90도
+    ROS +90도(CCW) -> ServoKit 0도
     """
     if not -90 <= relative_angle <= 90:
         raise ValueError(
             f"각도는 -90~90도 범위여야 합니다: {relative_angle}"
         )
 
-    servo_angle = relative_angle + 90
+    servo_angle = 90 - relative_angle
 
     print(
-        f"[MOVE] 사용자 기준 {relative_angle:+d}도 "
+        f"[MOVE] ROS yaw {relative_angle:+d}도 "
         f"-> ServoKit {servo_angle}도"
     )
 

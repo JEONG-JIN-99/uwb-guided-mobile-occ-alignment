@@ -35,6 +35,17 @@ class GimbalController:
         print("Gimbal Initialized")
         time.sleep(1.0)
 
+    @staticmethod
+    def uwb_to_ros_yaw(uwb_raw_degree):
+        """UWB의 CW 양수 방위각을 ROS의 CCW 양수 yaw로 변환한다."""
+        return -float(uwb_raw_degree)
+
+    @staticmethod
+    def ros_yaw_to_servo_angle(ros_yaw_degree):
+        """ROS yaw를 현재 장착 방향의 ServoKit 0~180도 명령으로 변환한다."""
+        clipped = max(-90.0, min(90.0, float(ros_yaw_degree)))
+        return 90.0 - clipped
+
     # non-heading
     # input: 내 위치(my_pos)와 타겟 위치(target_pos)의 위도, 경도 값
     # output: 라디안 값으로 방위각 반환 
@@ -110,8 +121,8 @@ class GimbalController:
     # output: 실제로 짐벌에게 정렬 명령한 방위각 (degree)
     def move_to(self, az_degree):
         """
-        상대 degree 값을 받아 서보 모터 이동
-        relative_degree: -90도 ~ 90도 범위를 주동력으로 사용
+        ROS yaw 기준 상대 degree를 받아 서보 모터 이동
+        양수는 반시계방향(CCW), 음수는 시계방향(CW)이다.
 
         이 함수는 0.1초 주기 제어에서 호출이 밀리지 않도록 블로킹하지 않는다.
         self.current_degree는 실제 센서 피드백이 아니라 마지막으로 명령한 상대 짐벌 각도다.
@@ -119,7 +130,7 @@ class GimbalController:
         # 디버깅 표시용 각도는 -90~90도 기준으로 사용
         input_az_degree = az_degree
 
-        # 짐벌 명령각은 중앙 90도를 0도로 보는 -90~90도 범위로 제한한다.
+        # ROS yaw 명령각을 -90~90도 범위로 제한한다.
         if input_az_degree < -90:
             gimbal_command_deg = -90
         elif input_az_degree > 90:
@@ -127,12 +138,7 @@ class GimbalController:
         else:
             gimbal_command_deg = input_az_degree
 
-        target_degree = gimbal_command_deg + 90.0
-
-        # # [핵심 수정] 기어 반전 적용
-        # # 실제 기계가 target_degree(예: 120도)로 가길 원한다면, 
-        # # 반대로 도는 모터는 (180 - 120) = 60도 지점으로 명령을 내려야 합니다.
-        # motor_target_degree = 180.0 - target_degree
+        target_degree = self.ros_yaw_to_servo_angle(gimbal_command_deg)
 
         # 3. PCA9685에 ServoKit 기준 0~180도 각도를 적용
         self.yaw_servo.angle = target_degree
@@ -144,12 +150,13 @@ class GimbalController:
 
     def move_by_uwb_relative(self, uwb_relative_degree, wait=True):
         """
-        UWB가 내는 현재 바라보는 방향 기준 상대각을 받아 짐벌 절대 명령각으로 변환해 이동한다.
+        CW 양수인 UWB 원시 상대각을 ROS yaw로 바꾼 뒤 짐벌 명령각에 더한다.
 
-        예: 마지막 짐벌 명령각이 10도이고 UWB 상대각이 20도이면 move_to(30)을 실행한다.
-        반환값은 실제로 명령된 중앙 90도 기준 상대각(gimbal_command_deg)이다.
+        예: ROS 짐벌각이 10도이고 UWB 원시각이 +20도(CW)이면
+        ROS 상대각 -20도로 변환해 move_to(-10)을 실행한다.
         """
-        next_command_deg = self.current_degree + uwb_relative_degree
+        uwb_ros_degree = self.uwb_to_ros_yaw(uwb_relative_degree)
+        next_command_deg = self.current_degree + uwb_ros_degree
         gimbal_command_deg = self.move_to(next_command_deg)
 
         if wait:

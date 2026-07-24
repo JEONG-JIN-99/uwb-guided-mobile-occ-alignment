@@ -3,7 +3,7 @@ import os
 import time
 import cv2
 
-from qr.scanner import SmartPhoneScanner
+from camera.scanner import SmartPhoneScanner
 
 class OneShotQRScanner(SmartPhoneScanner):
     def __init__(

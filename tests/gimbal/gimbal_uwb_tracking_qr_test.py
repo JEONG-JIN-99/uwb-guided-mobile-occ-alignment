@@ -15,9 +15,6 @@ CODE_DIR = os.path.join(PROJECT_ROOT, "code")
 if CODE_DIR not in sys.path:
     sys.path.insert(0, CODE_DIR)
 
-from gimbal.gimbal_controller_yaw import GimbalController
-
-
 UWB_DEADBAND_DEG = 0.0
 MAX_CORRECTION_PER_FRAME_DEG = 60.0
 TRACKING_INTERVAL_SEC = 0.2
@@ -114,12 +111,21 @@ def save_qr_failure_frame(cv2_module, run_dir, attempt, qr_result):
 class QRRecognitionWorker:
     """Recognize and persist QR results without blocking gimbal control."""
 
-    def __init__(self, scanner, cv2_module, run_dir, result_file, result_writer):
+    def __init__(
+        self,
+        scanner,
+        cv2_module,
+        run_dir,
+        result_file,
+        result_writer,
+        save_failure_frames=False,
+    ):
         self.scanner = scanner
         self.cv2_module = cv2_module
         self.run_dir = run_dir
         self.result_file = result_file
         self.result_writer = result_writer
+        self.save_failure_frames = save_failure_frames
         self.jobs = queue.Queue(maxsize=1)
         self.stop_event = threading.Event()
         self.thread = threading.Thread(
@@ -154,12 +160,14 @@ class QRRecognitionWorker:
             attempt, deadline_ns = job
             try:
                 qr_result = self.scanner.detect_until(deadline_ns)
-                failure_frame = save_qr_failure_frame(
-                    self.cv2_module,
-                    self.run_dir,
-                    attempt,
-                    qr_result,
-                )
+                failure_frame = ""
+                if self.save_failure_frames:
+                    failure_frame = save_qr_failure_frame(
+                        self.cv2_module,
+                        self.run_dir,
+                        attempt,
+                        qr_result,
+                    )
                 self.result_writer.writerow(
                     {
                         "qr_visible": int(qr_result.visible),
@@ -218,6 +226,12 @@ def main():
         help="camera warmup time in seconds (default: 1.0)",
     )
     parser.add_argument(
+        "--qr-recognition-time",
+        type=float,
+        default=1.0,
+        help="QR recognition window after a tracking update (default: 1.0)",
+    )
+    parser.add_argument(
         "--output-dir",
         default=str(Path(PROJECT_ROOT) / "result" / "gimbal_uwb_tracking_qr_test"),
         help="parent directory for per-run QR CSV results",
@@ -226,6 +240,14 @@ def main():
         "--live-stream",
         action="store_true",
         help="show the QR camera video while tracking",
+    )
+    parser.add_argument(
+        "--save-failure-frames",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "save failed QR frames as JPEG files (disabled by default)"
+        ),
     )
     parser.add_argument(
         "--initial-deg",
@@ -238,9 +260,12 @@ def main():
         parser.error("--qr-crop-scale must be greater than 0 and at most 1")
     if args.camera_warmup < 0:
         parser.error("--camera-warmup must be 0 or greater")
+    if args.qr_recognition_time <= 0:
+        parser.error("--qr-recognition-time must be greater than 0")
 
     import cv2
-    from qr.realsense_scanner import HardwareScanner
+    from camera.realsense_scanner import HardwareScanner
+    from gimbal.gimbal_controller_yaw import GimbalController
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((args.host, args.port))
@@ -282,6 +307,7 @@ def main():
             run_dir,
             result_file,
             result_writer,
+            save_failure_frames=args.save_failure_frames,
         )
         qr_worker.start()
 
@@ -295,7 +321,10 @@ def main():
             f"[INFO] Gimbal tracking runs every {TRACKING_INTERVAL_SEC:.1f}s "
             "using only the latest UWB packet."
         )
-        print("[INFO] QR recognition runs in parallel until the next alignment.")
+        print(
+            "[INFO] QR recognition runs in parallel for "
+            f"{args.qr_recognition_time:g}s per accepted QR job."
+        )
         print("[INFO] Move the opposite UWB module. Press Ctrl+C to stop.")
 
         next_update_ns = time.monotonic_ns()
@@ -315,6 +344,8 @@ def main():
 
                 _distance, uwb_relative_deg, _elevation = parsed
                 correction_deg = limit_uwb_correction(uwb_relative_deg)
+                uwb_ros_deg = -uwb_relative_deg
+                correction_ros_deg = -correction_deg
                 if not source_printed:
                     print(f"[SOURCE] receiving UWB packets from {addr[0]}:{addr[1]}")
                     source_printed = True
@@ -325,14 +356,18 @@ def main():
                     wait=False,
                 )
                 attempt += 1
-                qr_worker.submit(attempt, next_update_ns)
+                qr_deadline_ns = time.monotonic_ns() + int(
+                    args.qr_recognition_time * 1_000_000_000
+                )
+                qr_worker.submit(attempt, qr_deadline_ns)
 
                 print(
                     "[TRACK]\n"
-                    f"  relative_deg       : {uwb_relative_deg:.2f}\n"
-                    f"  correction_deg     : {correction_deg:.2f}\n"
-                    f"  prev_gimbal_deg    : {before_command_deg:.2f}\n"
-                    f"  gimbal_command_deg : {gimbal_command_deg:.2f}\n"
+                    f"  uwb_raw_deg         : {uwb_relative_deg:.2f}\n"
+                    f"  uwb_ros_deg         : {uwb_ros_deg:.2f}\n"
+                    f"  correction_ros_deg  : {correction_ros_deg:.2f}\n"
+                    f"  prev_gimbal_ros_deg : {before_command_deg:.2f}\n"
+                    f"  gimbal_ros_deg      : {gimbal_command_deg:.2f}\n"
                     f"  qr_attempt         : {attempt}"
                 )
             except Exception as exc:

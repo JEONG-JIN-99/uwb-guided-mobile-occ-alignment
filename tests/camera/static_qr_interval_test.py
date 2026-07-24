@@ -9,8 +9,8 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CODE_DIR = PROJECT_ROOT / "code"
-TEST_QR_DIR = Path(__file__).resolve().parent
-for path in (str(CODE_DIR), str(TEST_QR_DIR)):
+TEST_CAMERA_DIR = Path(__file__).resolve().parent
+for path in (str(CODE_DIR), str(TEST_CAMERA_DIR)):
     if path not in sys.path:
         sys.path.insert(0, path)
 

@@ -1,10 +1,10 @@
-"""RealSense 컬러 카메라를 이용한 QR 탐지 도구.
+"""RealSense 컬러 카메라를 이용한 QR 및 색상 원 탐지 도구.
 
 실험에서는 ``run()`` 대신 다음 순서로 사용하는 것을 전제로 한다.
 
 1. ``start_capture()``로 카메라 수신 스레드를 시작한다.
 2. 짐벌 정렬 명령을 내린다.
-3. ``detect_until(next_alignment_ns)``로 다음 정렬 시각까지만 QR을 찾는다.
+3. ``detect_until()``로 QR을 찾거나 ``detect_color_circle()``로 색상 원을 찾는다.
 4. 실험 종료 시 ``stop()``으로 카메라와 스레드를 정리한다.
 
 수신 스레드는 프레임을 큐에 쌓지 않고 가장 최신 프레임 한 장만 보관한다.
@@ -19,6 +19,19 @@ from typing import Any, Optional
 
 import cv2
 from pyzbar import pyzbar
+
+
+COLOR_HSV_RANGES = {
+    # 인쇄된 선명한 빨간색 표식만 대상으로 삼아 어둡고 탁한 갈색 계열을
+    # 제외하도록 hue 범위를 좁히고 채도/밝기 하한을 높인다.
+    "red": (((0, 150, 110), (7, 255, 255)), ((173, 150, 110), (180, 255, 255))),
+    "orange": (((10, 100, 80), (25, 255, 255)),),
+    "yellow": (((20, 100, 80), (35, 255, 255)),),
+    "green": (((35, 100, 80), (85, 255, 255)),),
+    "blue": (((90, 100, 80), (130, 255, 255)),),
+    "purple": (((130, 100, 80), (170, 255, 255)),),
+}
+SUPPORTED_TARGET_COLORS = tuple(COLOR_HSV_RANGES)
 
 
 @dataclass(frozen=True)
@@ -50,20 +63,58 @@ class QRDetectionResult:
     rect: Optional[tuple[int, int, int, int]] = None
 
 
+@dataclass(frozen=True)
+class ColorDetectionResult:
+    """색상 원 탐지 결과와 화면 중심 기준 위치 정보를 보관한다."""
+
+    visible: bool = False
+    frame: Optional[Any] = None
+    center: Optional[tuple[int, int]] = None
+    distance_px: Optional[float] = None
+    area_px: Optional[float] = None
+    circularity: Optional[float] = None
+    frame_id: Optional[int] = None
+    captured_ns: Optional[int] = None
+    rect: Optional[tuple[int, int, int, int]] = None
+
+
 class HardwareScanner:
-    def __init__(self, device_index=0, crop_scale=1.0, live_stream=False):
+    def __init__(
+        self,
+        device_index=0,
+        crop_scale=1.0,
+        live_stream=False,
+        color_min_area_px=500.0,
+        color_min_circularity=0.6,
+        target_color="red",
+    ):
         """
         Args:
             device_index: ``/dev/videoX``에서 X에 해당하는 정수값.
             crop_scale: 중앙을 기준으로 사용할 영상 영역의 비율.
             live_stream: True이면 OpenCV 창에 수신 영상을 표시한다.
+            color_min_area_px: 색상 원으로 인정할 최소 contour 면적.
+            color_min_circularity: 색상 원으로 인정할 최소 원형도(0~1).
+            target_color: 검출할 표식 색상.
         """
+        if color_min_area_px < 0:
+            raise ValueError("color_min_area_px must be 0 or greater")
+        if not 0 <= color_min_circularity <= 1:
+            raise ValueError("color_min_circularity must be between 0 and 1")
+        if target_color not in COLOR_HSV_RANGES:
+            raise ValueError(
+                "target_color must be one of: "
+                + ", ".join(SUPPORTED_TARGET_COLORS)
+            )
         self.device_index = device_index
         self.cap = None
         self.last_data = None
         self.is_running = False
         self.crop_scale = crop_scale
         self.live_stream = live_stream
+        self.color_min_area_px = float(color_min_area_px)
+        self.color_min_circularity = float(color_min_circularity)
+        self.target_color = target_color
         self.qr_detector = cv2.QRCodeDetector()
 
         # 카메라 수신 스레드의 생명주기를 관리한다.
@@ -185,6 +236,93 @@ class HardwareScanner:
             distance_px=distance,
             rect=(obj.rect.left, obj.rect.top, obj.rect.width, obj.rect.height),
         )
+
+    def detect_color_circle(self, frame, target_color=None):
+        """고정된 프레임에서 선택한 색상의 가장 큰 원 후보를 탐지한다.
+
+        작은 노이즈를 제거한 뒤 면적과 원형도를 모두 만족하는 가장 큰
+        contour를 결과로 사용한다. 빨간색은 hue가 0도 경계에서 나뉘므로
+        낮은 hue와 높은 hue의 두 범위를 합친다.
+        """
+        if frame is None:
+            return ColorDetectionResult()
+        if frame.dtype == "uint16":
+            frame = cv2.normalize(
+                frame,
+                None,
+                0,
+                255,
+                cv2.NORM_MINMAX,
+                dtype=cv2.CV_8U,
+            )
+
+        selected_color = target_color or self.target_color
+        if selected_color not in COLOR_HSV_RANGES:
+            raise ValueError(
+                "target_color must be one of: "
+                + ", ".join(SUPPORTED_TARGET_COLORS)
+            )
+
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        mask = None
+        for lower, upper in COLOR_HSV_RANGES[selected_color]:
+            range_mask = cv2.inRange(hsv, lower, upper)
+            mask = (
+                range_mask
+                if mask is None
+                else cv2.bitwise_or(mask, range_mask)
+            )
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        contours, _hierarchy = cv2.findContours(
+            mask,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE,
+        )
+        candidates = []
+        for contour in contours:
+            area = float(cv2.contourArea(contour))
+            if area < self.color_min_area_px:
+                continue
+            perimeter = float(cv2.arcLength(contour, True))
+            if perimeter <= 0:
+                continue
+            circularity = 4.0 * math.pi * area / (perimeter * perimeter)
+            if circularity < self.color_min_circularity:
+                continue
+            candidates.append((area, circularity, contour))
+
+        if not candidates:
+            return ColorDetectionResult(visible=False, frame=frame)
+
+        area, circularity, contour = max(candidates, key=lambda item: item[0])
+        moments = cv2.moments(contour)
+        if moments["m00"] == 0:
+            return ColorDetectionResult(visible=False, frame=frame)
+
+        center_x = int(round(moments["m10"] / moments["m00"]))
+        center_y = int(round(moments["m01"] / moments["m00"]))
+        height, width = frame.shape[:2]
+        distance = math.hypot(
+            width / 2.0 - center_x,
+            height / 2.0 - center_y,
+        )
+        x, y, rect_width, rect_height = cv2.boundingRect(contour)
+        return ColorDetectionResult(
+            visible=True,
+            frame=frame,
+            center=(center_x, center_y),
+            distance_px=distance,
+            area_px=area,
+            circularity=circularity,
+            rect=(x, y, rect_width, rect_height),
+        )
+
+    def detect_red_circle(self, frame):
+        """기존 호출과 호환되는 빨간색 원 검출 별칭."""
+        return self.detect_color_circle(frame, target_color="red")
 
     def process_frame(self, frame):
         """기존 실행 방식과 호환되도록 프레임의 모든 코드를 처리한다."""
@@ -400,6 +538,53 @@ class HardwareScanner:
             frame_id=last_snapshot.frame_id,
             captured_ns=last_snapshot.captured_ns,
         )
+
+    def detect_color_until(self, deadline_ns, target_color=None):
+        """호출 이후 프레임에서 선택한 색상 원을 마감 시각까지 찾는다."""
+        if self.capture_thread is None or not self.capture_thread.is_alive():
+            return ColorDetectionResult()
+
+        snapshot = self.get_latest_frame()
+        last_snapshot = snapshot
+        last_frame_id = snapshot.frame_id if snapshot is not None else 0
+
+        while time.monotonic_ns() < deadline_ns:
+            snapshot = self.wait_for_new_frame(last_frame_id, deadline_ns)
+            if snapshot is None:
+                break
+
+            last_snapshot = snapshot
+            last_frame_id = snapshot.frame_id
+            result = self.detect_color_circle(
+                snapshot.frame,
+                target_color=target_color,
+            )
+            if result.visible:
+                return ColorDetectionResult(
+                    visible=True,
+                    frame=result.frame,
+                    center=result.center,
+                    distance_px=result.distance_px,
+                    area_px=result.area_px,
+                    circularity=result.circularity,
+                    frame_id=snapshot.frame_id,
+                    captured_ns=snapshot.captured_ns,
+                    rect=result.rect,
+                )
+
+        if last_snapshot is None:
+            return ColorDetectionResult()
+
+        return ColorDetectionResult(
+            visible=False,
+            frame=last_snapshot.frame,
+            frame_id=last_snapshot.frame_id,
+            captured_ns=last_snapshot.captured_ns,
+        )
+
+    def detect_red_until(self, deadline_ns):
+        """기존 호출과 호환되는 빨간색 원 구간 검출 별칭."""
+        return self.detect_color_until(deadline_ns, target_color="red")
 
     def run(self):
         """기존 호환용 동기 스캐너 루프.

@@ -6,7 +6,7 @@ import time
 
 from gimbal.gimbal_controller_yaw import GimbalController
 from logger.result_logger import ResultLogger
-from qr.realsense_scanner import HardwareScanner
+from camera.realsense_scanner import HardwareScanner
 from time_sync.chrony_clock import (
     format_utc_epoch_ns,
     parse_utc_epoch_ns,
@@ -26,6 +26,7 @@ RX_LOG_FIELDS = (
     "nominal_elapsed_sec",
     "actual_elapsed_sec",
     "rx_uwb_azimuth_deg",
+    "rx_uwb_ros_azimuth_deg",
     "rx_correction_deg",
     "rx_gimbal_command_deg",
     "qr_detected",
@@ -258,6 +259,8 @@ def main():
 
                 _distance, uwb_relative_deg, _elevation = parsed
                 correction_deg = limit_uwb_correction(uwb_relative_deg)
+                uwb_ros_deg = -uwb_relative_deg
+                correction_ros_deg = -correction_deg
                 if not source_printed:
                     print(f"[SOURCE] receiving UWB packets from {addr[0]}:{addr[1]}")
                     source_printed = True
@@ -290,7 +293,8 @@ def main():
                         "nominal_elapsed_sec": f"{nominal_elapsed_sec:.6f}",
                         "actual_elapsed_sec": f"{actual_elapsed_sec:.6f}",
                         "rx_uwb_azimuth_deg": f"{uwb_relative_deg:.6f}",
-                        "rx_correction_deg": f"{correction_deg:.6f}",
+                        "rx_uwb_ros_azimuth_deg": f"{uwb_ros_deg:.6f}",
+                        "rx_correction_deg": f"{correction_ros_deg:.6f}",
                         "rx_gimbal_command_deg": f"{gimbal_command_deg:.6f}",
                         "qr_detected": int(qr_result.detected),
                     }
@@ -298,10 +302,11 @@ def main():
 
                 print(
                     f"[TRACK] sample {sample_index + 1}/{args.samples}\n"
-                    f"  relative_deg       : {uwb_relative_deg:.2f}\n"
-                    f"  correction_deg     : {correction_deg:.2f}\n"
-                    f"  prev_gimbal_deg    : {before_command_deg:.2f}\n"
-                    f"  gimbal_command_deg : {gimbal_command_deg:.2f}\n"
+                    f"  uwb_raw_deg         : {uwb_relative_deg:.2f}\n"
+                    f"  uwb_ros_deg         : {uwb_ros_deg:.2f}\n"
+                    f"  correction_ros_deg  : {correction_ros_deg:.2f}\n"
+                    f"  prev_gimbal_ros_deg : {before_command_deg:.2f}\n"
+                    f"  gimbal_ros_deg      : {gimbal_command_deg:.2f}\n"
                     f"  qr_detected        : {int(qr_result.detected)}\n"
                     f"  nominal_elapsed_sec: {nominal_elapsed_sec:.3f}\n"
                     f"  actual_elapsed_sec : {actual_elapsed_sec:.3f}"

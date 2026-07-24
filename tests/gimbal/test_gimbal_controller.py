@@ -143,7 +143,7 @@ class TestGimbalController(unittest.TestCase):
 
         self.assertAlmostEqual(gimbal_command_deg, 30.0)
         self.assertAlmostEqual(self.gimbal.current_degree, 30.0)
-        self.assertEqual(self.servo.angle_history, [120.0])
+        self.assertEqual(self.servo.angle_history, [60.0])
         self.mock_sleep.assert_not_called()
 
     def test_move_to_clamps_relative_degree_range(self):
@@ -151,17 +151,23 @@ class TestGimbalController(unittest.TestCase):
 
         self.assertAlmostEqual(gimbal_command_deg, 90.0)
         self.assertAlmostEqual(self.gimbal.current_degree, 90.0)
-        self.assertEqual(self.servo.angle_history, [180.0])
+        self.assertEqual(self.servo.angle_history, [0.0])
 
-    def test_move_by_uwb_relative_adds_to_last_command(self):
+    def test_move_by_uwb_relative_converts_cw_positive_to_ros_yaw(self):
         self.gimbal.current_degree = 10.0
 
         gimbal_command_deg = self.gimbal.move_by_uwb_relative(20.0)
 
-        self.assertAlmostEqual(gimbal_command_deg, 30.0)
-        self.assertAlmostEqual(self.gimbal.current_degree, 30.0)
-        self.assertEqual(self.servo.angle_history, [120.0])
+        self.assertAlmostEqual(gimbal_command_deg, -10.0)
+        self.assertAlmostEqual(self.gimbal.current_degree, -10.0)
+        self.assertEqual(self.servo.angle_history, [100.0])
         self.mock_sleep.assert_called_once_with(self.gimbal.ALIGN_INTERVAL_SEC)
+
+    def test_coordinate_conversions(self):
+        self.assertEqual(self.gimbal.uwb_to_ros_yaw(30.0), -30.0)
+        self.assertEqual(self.gimbal.uwb_to_ros_yaw(-30.0), 30.0)
+        self.assertEqual(self.gimbal.ros_yaw_to_servo_angle(30.0), 60.0)
+        self.assertEqual(self.gimbal.ros_yaw_to_servo_angle(-30.0), 120.0)
 
     def test_disable_control_signal_releases_servo(self):
         self.gimbal.disable_control_signal()
@@ -205,8 +211,8 @@ class TestGimbalStepController(unittest.TestCase):
         
         final_degree = self.gimbal.step_move_by_data('gps', my_pos=my_pos, target_pos=target_pos)
         
-        # 최종 상대 각도는 +90도여야 함
-        self.assertAlmostEqual(final_degree, 90.0)
+        # 동쪽/CW는 ROS yaw -90도여야 함
+        self.assertAlmostEqual(final_degree, -90.0)
         
         calls = self.servo.angle_history
         self.assertTrue(len(calls) > 0)
@@ -225,8 +231,8 @@ class TestGimbalStepController(unittest.TestCase):
         
         final_degree = self.gimbal.step_move_by_data('gps', my_pos=my_pos, target_pos=target_pos)
         
-        # 최종 상대 각도는 -90도여야 함
-        self.assertAlmostEqual(final_degree, -90.0)
+        # 서쪽/CCW는 ROS yaw +90도여야 함
+        self.assertAlmostEqual(final_degree, 90.0)
         
         calls = self.servo.angle_history
         self.assertTrue(len(calls) > 0)
@@ -242,7 +248,7 @@ class TestGimbalStepController(unittest.TestCase):
         
         final_degree = self.gimbal.step_move_by_data('uwb', azimuth=0.5)
         
-        self.assertAlmostEqual(final_degree, 90.0)
+        self.assertAlmostEqual(final_degree, -90.0)
         calls = self.servo.angle_history
         self.assertAlmostEqual(calls[0], 91.8)
         self.assertAlmostEqual(calls[-1], 180.0)
@@ -254,7 +260,7 @@ class TestGimbalStepController(unittest.TestCase):
         
         final_degree = self.gimbal.step_move_by_data('uwb', azimuth=-0.5)
         
-        self.assertAlmostEqual(final_degree, -90.0)
+        self.assertAlmostEqual(final_degree, 90.0)
         calls = self.servo.angle_history
         self.assertAlmostEqual(calls[0], 88.2)
         self.assertAlmostEqual(calls[-1], 0.0)

@@ -23,7 +23,8 @@ RESULT_FIELDS = (
     "interval_s",
     "initial_gimbal_deg",
     "uwb_raw_azimuth_deg",
-    "gimbal_command_deg",
+    "uwb_ros_azimuth_deg",
+    "gimbal_command_ros_deg",
     "qr_visible",
     "qr_detected",
 )
@@ -35,7 +36,8 @@ def normalize_angle(angle_deg):
 
 
 def estimate_tx_azimuth(initial_gimbal_deg, uwb_relative_azimuth_deg):
-    return normalize_angle(initial_gimbal_deg + uwb_relative_azimuth_deg)
+    uwb_ros_azimuth_deg = -float(uwb_relative_azimuth_deg)
+    return normalize_angle(initial_gimbal_deg + uwb_ros_azimuth_deg)
 
 
 def clamp_servo_command(requested_deg, min_deg, max_deg):
@@ -306,7 +308,7 @@ def main(argv=None):
     validate_args(parser, args)
 
     from gimbal.gimbal_controller_yaw import GimbalController
-    from qr.realsense_scanner import HardwareScanner
+    from camera.realsense_scanner import HardwareScanner
 
     import cv2 as cv2_module
 
@@ -422,11 +424,13 @@ def main(argv=None):
                     else:
                         (_uwb_distance, raw_azimuth, _elevation), _received_ns, address = uwb_result
                         requested = estimate_tx_azimuth(initial_deg, raw_azimuth)
+                        ros_azimuth = -raw_azimuth
                         command, clipped = clamp_servo_command(requested, -90.0, 90.0)
                         row.update(
                             {
                                 "uwb_raw_azimuth_deg": raw_azimuth,
-                                "gimbal_command_deg": command,
+                                "uwb_ros_azimuth_deg": ros_azimuth,
+                                "gimbal_command_ros_deg": command,
                                 "servo_clipped": clipped,
                                 "uwb_source": f"{address[0]}:{address[1]}",
                             }
@@ -491,7 +495,9 @@ def main(argv=None):
                             visible_count += 1
 
                         print(
-                            f"  UWB={raw_azimuth:.2f} deg, command={command:.2f} deg, "
+                            f"  UWB raw={raw_azimuth:.2f} deg, "
+                            f"UWB ROS={ros_azimuth:.2f} deg, "
+                            f"ROS command={command:.2f} deg, "
                             f"visible={int(row['qr_visible'])}, "
                             f"detected={int(row['qr_detected'])}"
                         )
@@ -510,7 +516,8 @@ def main(argv=None):
                             "interval_s": row["interval_s"],
                             "initial_gimbal_deg": row["initial_gimbal_deg"],
                             "uwb_raw_azimuth_deg": row["uwb_raw_azimuth_deg"],
-                            "gimbal_command_deg": row["gimbal_command_deg"],
+                            "uwb_ros_azimuth_deg": row["uwb_ros_azimuth_deg"],
+                            "gimbal_command_ros_deg": row["gimbal_command_ros_deg"],
                             "qr_visible": row["qr_visible"],
                             "qr_detected": row["qr_detected"],
                         }

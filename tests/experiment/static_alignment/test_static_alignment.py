@@ -22,7 +22,7 @@ class StaticAlignmentTests(unittest.TestCase):
     def test_angle_calculations(self):
         self.assertEqual(normalize_angle(180), -180)
         self.assertEqual(normalize_angle(-181), 179)
-        self.assertAlmostEqual(estimate_tx_azimuth(-20, -41.3), -61.3)
+        self.assertAlmostEqual(estimate_tx_azimuth(-20, -41.3), 21.3)
 
     def test_servo_clipping(self):
         self.assertEqual(

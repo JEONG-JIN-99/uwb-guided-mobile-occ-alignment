@@ -14,8 +14,8 @@ from uwb.sensor import UWB
 
 from logger.result_logger import ResultLogger
 from gimbal.gimbal_controller_yaw import GimbalController
-from qr.scanner import SmartPhoneScanner
-from qr.one_shot_scanner import OneShotQRScanner
+from camera.scanner import SmartPhoneScanner
+from camera.one_shot_scanner import OneShotQRScanner
 
 # --- 통신 설정 ---
 UDP_IP = "0.0.0.0"
@@ -154,12 +154,15 @@ try:
                 if header == "1": # UWB 모드
                     mode_name = "uwb"
                     dist, az, el = map(float, parts[1:4])
-                    yaw = az 
-                    yaw_deg = yaw
+                    yaw_deg = az
+                    yaw_ros_deg = gimbal.uwb_to_ros_yaw(yaw_deg)
                     
                     # 💡 타겟 각도 디그리 -> 라디안 변환 후 짐벌 이동
-                    gimbal_command_deg = gimbal.move_to(yaw)
-                    print(f"[UWB] Target Az: {yaw_deg}° | gimbal_command_deg: {gimbal_command_deg:.2f}°")
+                    gimbal_command_deg = gimbal.move_to(yaw_ros_deg)
+                    print(
+                        f"[UWB] raw={yaw_deg:.2f}°, ROS={yaw_ros_deg:.2f}°, "
+                        f"gimbal_ros={gimbal_command_deg:.2f}°"
+                    )
 
                 else: # GPS 모드
                     mode_name = "gps"
@@ -170,7 +173,7 @@ try:
                     gps_read_time_ns = int(parts[6])
 
                     yaw = gimbal.calculate_gps_angles(my_pos, target_pos)
-                    yaw_deg = math.degrees(yaw)
+                    yaw_deg = -math.degrees(yaw)
                     
                     # 💡 타겟 각도 디그리 -> 라디안 변환 후 짐벌 이동
                     gimbal_command_deg = gimbal.move_to(yaw_deg)
