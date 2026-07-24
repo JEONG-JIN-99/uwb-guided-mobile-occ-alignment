@@ -33,10 +33,12 @@ RESULT_FIELDS = (
     "color_center_y",
     "color_center_distance_px",
     "color_area_px",
+    "color_component_area_px",
     "color_circularity",
     "camera_frame_id",
     "camera_captured_ns",
     "detection_time_ms",
+    "failure_frame",
 )
 
 
@@ -70,10 +72,27 @@ def limit_uwb_correction(uwb_relative_deg):
     )
 
 
+def save_color_failure_frame(cv2_module, run_dir, attempt, color_result):
+    """색상 미검출 프레임을 저장하고 실행 폴더 기준 상대 경로를 반환한다."""
+    if color_result.visible or color_result.frame is None:
+        return ""
+
+    relative_path = Path("failed_frames") / (
+        f"attempt_{attempt:06d}_not_detected.jpg"
+    )
+    failure_path = run_dir / relative_path
+    failure_path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2_module.imwrite(str(failure_path), color_result.frame):
+        raise RuntimeError(
+            f"failed to save color detection failure frame: {failure_path}"
+        )
+    return str(relative_path)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         description=(
-            "Track a UWB target with the yaw gimbal and record color-circle "
+            "Track a UWB target with the yaw gimbal and record color "
             "visibility after every processed alignment."
         )
     )
@@ -86,16 +105,46 @@ def build_parser():
         default=0x40,
     )
     parser.add_argument("--device-index", type=int, default=4)
-    parser.add_argument("--crop-scale", type=float, default=0.3)
-    parser.add_argument("--camera-warmup", type=float, default=1.0)
+    parser.add_argument("--crop-scale", type=float, default=1.0)
+    parser.add_argument(
+        "--camera-warmup",
+        type=float,
+        default=5.0,
+        help=(
+            "camera warmup time for auto exposure/white balance "
+            "(default: 5.0)"
+        ),
+    )
+    parser.add_argument(
+        "--attempts",
+        type=int,
+        default=100,
+        help="number of UWB alignment/color detection attempts (default: 100)",
+    )
     parser.add_argument("--initial-deg", type=float, default=0.0)
     parser.add_argument(
         "--target-color",
         choices=("red", "orange", "yellow", "green", "blue", "purple"),
         default="red",
     )
-    parser.add_argument("--color-min-area", type=float, default=500.0)
-    parser.add_argument("--color-min-circularity", type=float, default=0.6)
+    parser.add_argument(
+        "--color-min-area",
+        type=float,
+        default=500.0,
+        help="minimum total selected-color mask pixels (default: 500)",
+    )
+    parser.add_argument(
+        "--color-min-component-area",
+        type=float,
+        default=200.0,
+        help="minimum largest connected color area in pixels (default: 200)",
+    )
+    parser.add_argument(
+        "--save-failure-frames",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="save frames where the selected color is not detected (default: on)",
+    )
     parser.add_argument("--live-stream", action="store_true")
     parser.add_argument(
         "--output-dir",
@@ -109,10 +158,12 @@ def validate_args(parser, args):
         parser.error("--crop-scale must be greater than 0 and at most 1")
     if args.camera_warmup < 0:
         parser.error("--camera-warmup must be 0 or greater")
+    if args.attempts <= 0:
+        parser.error("--attempts must be greater than 0")
     if args.color_min_area < 0:
         parser.error("--color-min-area must be 0 or greater")
-    if not 0 <= args.color_min_circularity <= 1:
-        parser.error("--color-min-circularity must be between 0 and 1")
+    if args.color_min_component_area < 0:
+        parser.error("--color-min-component-area must be 0 or greater")
 
 
 def main(argv=None):
@@ -120,6 +171,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     validate_args(parser, args)
 
+    import cv2
     from camera.realsense_scanner import HardwareScanner
     from gimbal.gimbal_controller_yaw import GimbalController
 
@@ -135,7 +187,7 @@ def main(argv=None):
         crop_scale=args.crop_scale,
         live_stream=args.live_stream,
         color_min_area_px=args.color_min_area,
-        color_min_circularity=args.color_min_circularity,
+        color_min_component_area_px=args.color_min_component_area,
         target_color=args.target_color,
     )
 
@@ -158,7 +210,8 @@ def main(argv=None):
         )
         print(f"[RESULT] color results will be saved to {results_path}")
         print(
-            f"[INFO] {args.target_color} circle detection runs after every "
+            f"[INFO] {args.target_color} presence detection checks every new "
+            f"camera frame for up to {TRACKING_INTERVAL_SEC:.1f}s after each "
             "processed alignment."
         )
 
@@ -195,21 +248,24 @@ def main(argv=None):
                     attempt += 1
 
                     detection_started_ns = time.monotonic_ns()
-                    snapshot = scanner.get_latest_frame()
-                    if snapshot is None:
-                        color_result = scanner.detect_color_circle(None)
-                        frame_id = None
-                        captured_ns = None
-                    else:
-                        color_result = scanner.detect_color_circle(snapshot.frame)
-                        frame_id = snapshot.frame_id
-                        captured_ns = snapshot.captured_ns
+                    color_result = scanner.detect_color_presence_until(
+                        next_update_ns,
+                        target_color=args.target_color,
+                    )
                     detection_time_ms = (
                         time.monotonic_ns() - detection_started_ns
                     ) / 1_000_000
 
                     if color_result.visible:
                         visible_count += 1
+                    failure_frame = ""
+                    if args.save_failure_frames:
+                        failure_frame = save_color_failure_frame(
+                            cv2,
+                            run_dir,
+                            attempt,
+                            color_result,
+                        )
                     center = color_result.center or ("", "")
                     writer.writerow(
                         {
@@ -238,14 +294,22 @@ def main(argv=None):
                                 if color_result.area_px is not None
                                 else ""
                             ),
+                            "color_component_area_px": (
+                                color_result.component_area_px
+                                if color_result.component_area_px is not None
+                                else ""
+                            ),
                             "color_circularity": (
                                 color_result.circularity
                                 if color_result.circularity is not None
                                 else ""
                             ),
-                            "camera_frame_id": frame_id or "",
-                            "camera_captured_ns": captured_ns or "",
+                            "camera_frame_id": color_result.frame_id or "",
+                            "camera_captured_ns": (
+                                color_result.captured_ns or ""
+                            ),
                             "detection_time_ms": detection_time_ms,
+                            "failure_frame": failure_frame,
                         }
                     )
                     result_file.flush()
@@ -265,9 +329,19 @@ def main(argv=None):
                         f"  color_visible       : {int(color_result.visible)}\n"
                         f"  color_center        : {color_result.center}\n"
                         f"  center_distance_px   : {color_result.distance_px}\n"
+                        f"  color_area_px       : {color_result.area_px}\n"
+                        f"  component_area_px   : "
+                        f"{color_result.component_area_px}\n"
+                        f"  failure_frame       : {failure_frame}\n"
                         f"  detection_time_ms    : {detection_time_ms:.3f}\n"
                         f"  cumulative_rate      : {rate:.2f}%"
                     )
+                    if attempt >= args.attempts:
+                        print(
+                            f"[DONE] completed {args.attempts} "
+                            "alignment/color detection attempts"
+                        )
+                        break
                 except Exception as exc:
                     print(f"[WARN] failed to process packet {data!r}: {exc}")
 

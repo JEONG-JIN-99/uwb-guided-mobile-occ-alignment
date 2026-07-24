@@ -112,6 +112,97 @@ UWB 상대각의 절댓값이 코드의
 QR 디코딩에 실패하면 해당 프레임을 실행 폴더의 `failed_frames/`에 저장하고,
 `qr_results.csv`의 `failure_frame` 열에 이미지의 상대 경로를 함께 기록합니다.
 
+## `gimbal_uwb_tracking_color_test.py`
+
+QR 대신 색상 원을 사용해 동적인 UWB 정렬 결과를 확인하는 테스트입니다.
+0.2초마다 UDP 소켓에 쌓인 패킷을 비우고 가장 최신 UWB 패킷 하나만 사용해
+yaw 짐벌을 보정합니다. 보정 명령 직후부터 다음 정렬 시각까지 들어오는 새
+카메라 프레임을 검사하고, 하나라도 선택한 색상 면적 조건을 통과하면 성공으로
+기록합니다. 기본 100회를 완료하면 자동으로
+종료하고 짐벌을 0도로 복귀시킵니다. 색상을 검출하지 못한 프레임은 기본적으로
+실행 결과의 `failed_frames/`에 저장합니다.
+
+기본 대상은 빨간색이며 다음 명령으로 실행합니다. 카메라 자동 노출과
+화이트밸런스가 안정되도록 기본 5초 동안 기다린 뒤 측정을 시작합니다.
+
+```bash
+python tests/gimbal/gimbal_uwb_tracking_color_test.py
+```
+
+다른 색상을 검사하려면 `--target-color`를 지정합니다. 선택 가능한 값은
+`red`, `orange`, `yellow`, `green`, `blue`, `purple`입니다.
+
+```bash
+python tests/gimbal/gimbal_uwb_tracking_color_test.py --target-color blue
+```
+
+카메라 영상을 함께 확인하려면 다음과 같이 실행합니다.
+
+```bash
+python tests/gimbal/gimbal_uwb_tracking_color_test.py \
+  --target-color red \
+  --live-stream
+```
+
+PCA9685와 카메라를 포함한 주요 옵션의 사용 예는 다음과 같습니다.
+
+```bash
+python tests/gimbal/gimbal_uwb_tracking_color_test.py \
+  --host 0.0.0.0 \
+  --port 5005 \
+  --servo-channel 0 \
+  --pca9685-address 0x40 \
+  --device-index 4 \
+  --crop-scale 1.0 \
+  --camera-warmup 5 \
+  --attempts 100 \
+  --initial-deg 0 \
+  --target-color red \
+  --color-min-area 500 \
+  --color-min-component-area 200 \
+  --save-failure-frames
+```
+
+색상 검출 알고리즘은 다음 순서로 동작합니다.
+
+1. BGR 카메라 프레임을 HSV로 변환합니다.
+2. 선택한 색상의 HSV 범위에 포함되는 픽셀로 이진 마스크를 만듭니다. 빨간색은
+   Hue 경계 양쪽의 두 범위를 합칩니다.
+3. 5×5 타원형 커널의 opening과 closing으로 작은 노이즈와 마스크 내부의
+   작은 빈 영역을 정리합니다.
+4. 전체 마스크 픽셀이 `--color-min-area` 이상이고 가장 큰 연결 영역이
+   `--color-min-component-area` 이상이면 색상이 보인 것으로 판정합니다.
+5. 원형도는 성공 조건에서 제외하고 진단값으로만 기록합니다. 가장 큰 연결
+   영역의 중심점과 화면 중심까지의 픽셀 거리도 계산합니다.
+6. 각 UWB 보정 이후 최대 0.2초 동안 새 프레임을 검사하며, 한 장이라도
+   성공하면 해당 시도를 성공으로 기록합니다.
+
+현재 빨간색은 인쇄된 선명한 빨간 표식을 대상으로 `H=0–7 또는 173–180`,
+`S≥150`, `V≥110`을 사용합니다. 기본값은 crop 없는 전체 프레임,
+전체 빨간 마스크 500px 이상, 최대 연결 영역 200px 이상입니다.
+
+실행 횟수는 `--attempts`로 바꿀 수 있습니다.
+
+```bash
+python tests/gimbal/gimbal_uwb_tracking_color_test.py --attempts 50
+```
+
+결과는 실행마다 다음 경로에 저장됩니다.
+
+```text
+result/gimbal_uwb_tracking_color_test/run_YYYYMMDD_HHMMSS/color_results.csv
+result/gimbal_uwb_tracking_color_test/run_YYYYMMDD_HHMMSS/failed_frames/
+```
+
+CSV에는 UWB 원시·ROS 상대각, 적용 보정각, 이전 및 새 짐벌 명령각, PCA9685
+서보 각도, 선택한 색상과 검출 여부, 색상 원 중심과 화면 중심 사이 거리,
+전체 마스크 면적·최대 연결 영역 면적·진단용 원형도, 카메라 프레임
+번호·촬영 시각 및 검출 처리 시간이
+기록됩니다. 실패 행의 `failure_frame`에는 저장된 이미지의 실행 폴더 기준
+상대 경로가 들어갑니다. 실패 이미지 저장을 끄려면
+`--no-save-failure-frames`를 사용합니다. `color_visible`은 표식의 화면 진입 성공 여부로,
+`color_center_distance_px`는 동적 정렬 오차 지표로 사용할 수 있습니다.
+
 ## `send_fake_uwb_sweep.py`
 
 가짜 UWB 상대각 패킷을 `gimbal_uwb_tracking_test.py`로 보내는 테스트 송신 코드입니다.

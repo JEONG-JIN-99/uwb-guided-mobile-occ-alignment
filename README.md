@@ -223,6 +223,28 @@ Yaw 1축 서보 모터 제어의 핵심 클래스입니다.
 - 상대각 `-90°`, `0°`, `+90°` 동작과 제어 신호 비활성화를 확인합니다.
 - MG996R 서보와 PCA9685 연결을 확인하기 위한 파일입니다.
 
+#### `tests/gimbal/gimbal_uwb_tracking_color_test.py`
+
+0.2초마다 가장 최신 UWB 상대각으로 yaw 짐벌을 동적으로 보정하고, 다음 정렬
+시각까지 새 카메라 프레임에서 선택한 색상의 존재 여부를 검사합니다. 원형도는
+성공 조건으로 사용하지 않으며, 전체 색상 면적과 최대 연결 영역 면적으로
+판정합니다. 기본 대상은 빨간색이며
+`--target-color`로 `red`, `orange`, `yellow`, `green`, `blue`, `purple` 중
+하나를 선택할 수 있습니다. 기본 100회의 정렬·색상 판정을 마치면 자동으로
+종료합니다.
+
+```bash
+python tests/gimbal/gimbal_uwb_tracking_color_test.py \
+  --target-color red \
+  --live-stream
+```
+
+결과는
+`result/gimbal_uwb_tracking_color_test/run_YYYYMMDD_HHMMSS/color_results.csv`에
+저장되며 색상 미검출 프레임은 같은 실행 폴더의 `failed_frames/`에 저장됩니다.
+전체 알고리즘과 PCA9685·카메라 옵션은
+`tests/gimbal/README.md`를 참고합니다.
+
 #### `tests/gimbal/test_gimbal_controller.py`
 
 `GimbalController`와 `GimbalStepController` 단위 테스트입니다.
