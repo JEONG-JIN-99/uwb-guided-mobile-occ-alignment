@@ -1,163 +1,170 @@
-# Static Alignment Test
+# Static Alignment Color Test
 
-`static_alignment_test.py`는 짐벌을 무작위 초기각으로 이동한 뒤 UWB 방위각으로
-송신기 방향을 추정하고, 정렬과 안정화가 끝난 이후 QR 인식률을 측정하는
-하드웨어 실험 코드다.
+`static_alignment_test.py`는 짐벌을 무작위 초기각으로 이동한 뒤 UWB 상대
+방위각으로 송신기 방향을 계산하고, 정렬 명령 시점부터 제한시간 안에 선택한
+색상이 인식되는지 측정하는 하드웨어 실험 코드다. QR은 사용하지 않는다.
 
-## 동작 알고리즘
+## 동작 순서
 
 각 시도는 다음 순서로 진행된다.
 
-1. PCA9685 서보 드라이버, UWB UDP 수신기와 RealSense 카메라를 초기화한다.
-2. 짐벌을 상대각 `0도`로 이동하고 `--zero-settle-time` 동안 기다린다.
-3. `--initial-min`과 `--initial-max` 사이에서 무작위 초기각을 선택한다.
-4. 짐벌을 선택한 초기각으로 이동하고 `--settle-time` 동안 기다린다.
-5. 짐벌 이동 전에 수신된 오래된 UWB 패킷을 모두 버린다.
-6. `--uwb-timeout` 동안 새로운 유효 UWB 패킷을 기다린다.
-7. 다음 공식으로 송신기 방향과 짐벌 명령각을 계산한다.
+1. PCA9685 서보 드라이버, UWB UDP 수신기, RealSense 카메라를 초기화한다.
+2. 카메라 자동 노출과 화이트 밸런스를 위해 `--camera-warmup` 동안 기다린다.
+3. 짐벌을 ROS yaw `0도`로 이동하고 `--zero-settle-time` 동안 안정화한다.
+4. `--initial-min`과 `--initial-max` 사이의 무작위 초기각으로 이동하고
+   `--initial-settle-time` 동안 안정화한다.
+5. 이전 UWB 패킷을 버리고 `--uwb-timeout` 안에 도착한 첫 유효 패킷을 받는다.
+6. UWB 원시 CW 상대 방위각을 ROS CCW 상대각으로 바꾸고 목표각을 계산한다.
 
    ```text
    UWB ROS 상대각 = -UWB 원시 상대 방위각
-   요청각 = 초기 ROS 짐벌각 + UWB ROS 상대각
-   명령각 = 요청각을 -90도 이상 +90도 이하로 제한한 값
+   계산 목표각 = 초기 ROS 짐벌각 + UWB ROS 상대각
+   짐벌 명령각 = 계산 목표각을 -90도 이상 +90도 이하로 제한한 값
    ```
 
-8. 계산된 명령각으로 짐벌을 이동하고 `--alignment-settle-time` 동안 기다린다.
-9. 안정화가 끝난 시점부터 `--interval` 동안 QR을 탐지한다.
-10. QR 인식 결과를 CSV에 기록한다. 인식에 실패하면 마지막 프레임도 저장한다.
-11. 짐벌을 다시 `0도`로 이동하고 다음 시도를 반복한다.
-12. 모든 시도가 끝나면 짐벌, UWB 소켓과 카메라 자원을 정리하고 인식률을 출력한다.
+7. 짐벌 정렬 명령을 보낸 순간부터 `--interval` 동안 도착하는 새 카메라
+   프레임에서 색상을 찾는다. 기본 제한시간은 0.2초다.
+8. 정렬 명령 후 총 `--alignment-settle-time`이 지날 때까지 나머지 시간을
+   기다린다. 색상 인식에 사용된 시간도 이 안정화 시간에 포함된다.
+9. 결과를 CSV에 기록한다. 실패하면 마지막 프레임을 `failed_frames/`에
+   저장한다.
+10. 짐벌을 0도로 돌리고 다음 시도를 진행한다.
 
-UWB 패킷은 다음 형식을 사용한다.
+실험 도중에는 PCA9685 PWM을 끄지 않는다. 프로그램 종료 시에만 하드웨어
+자원 정리를 위해 짐벌 제어기를 정리한다.
 
-```text
-1,distance,azimuth,elevation
-```
-
-예:
-
-```text
-1,2.5,-31.2,0.4
-```
+UWB 패킷 형식은 `1,distance,azimuth,elevation`이다.
 
 ## 기본 실행
 
-`--distance`는 필수 인자다.
+`--distance`는 수동으로 측정한 실험 거리(m)이며 필수다.
 
 ```bash
 python code/experiment/static_alignment_test.py --distance 2
 ```
 
-기본 설정은 다음과 같다.
+기본 설정:
 
-| 설정 | 기본값 |
-|---|---:|
-| 시도 횟수 | 100 |
-| 무작위 초기각 | -50도 ~ +50도 |
-| QR 탐지 시간 | 1초 |
-| 초기각 안정화 시간 | 2초 |
-| 0도 복귀 안정화 시간 | 2초 |
-| UWB 정렬 안정화 시간 | 2초 |
-| 서보 제어 신호 유지 시간 | 1초 |
-| PCA9685 주소 | `0x40` |
-| 서보 채널 | 0 |
-| UWB UDP 포트 | 5005 |
+| 설정 | 옵션 | 기본값 |
+|---|---|---:|
+| 시도 횟수 | `--attempts` | 100 |
+| 무작위 초기각 | `--initial-min`, `--initial-max` | -50도 ~ +50도 |
+| 색상 인식 제한시간 | `--interval` | 0.2초 |
+| 카메라 색상 안정화 | `--camera-warmup` | 5초 |
+| 0도 복귀 안정화 | `--zero-settle-time` | 1초 |
+| 초기각 이동 안정화 | `--initial-settle-time` | 1초 |
+| 정렬 명령 후 전체 안정화 | `--alignment-settle-time` | 1초 |
+| 영상 크롭 비율 | `--crop-scale` | 1.0 |
+| 인식 색상 | `--target-color` | red |
+| PCA9685 주소 | `--pca9685-address` | `0x40` |
+| 서보 채널 | `--servo-channel` | 0 |
+| UWB UDP 포트 | `--uwb-port` | 5005 |
 
-## 전체 옵션을 지정한 실행 예시
+### 안정화 시간 옵션의 차이
+
+- `--camera-warmup`: 실험 시작 시 카메라 자동 노출과 화이트 밸런스가 색을
+  안정적으로 표현하도록 한 번만 기다리는 시간이다.
+- `--zero-settle-time`: 매 시도에서 짐벌을 0도로 보낸 뒤 기다리는 시간이다.
+- `--initial-settle-time`: 무작위 초기각으로 이동한 뒤 UWB를 받기 전에
+  기다리는 시간이다. 이전 이름인 `--settle-time`도 호환된다.
+- `--alignment-settle-time`: UWB 목표각으로 정렬 명령을 보낸 시점부터 세는
+  전체 안정화 시간이다. 첫 0.2초의 색상 인식 구간을 포함하므로
+  `--interval`보다 작게 설정할 수 없다.
+
+`--warmup`은 `--camera-warmup`의 이전 이름으로 계속 사용할 수 있다.
+
+## 색상 판정
+
+지원 색상은 `red`, `orange`, `yellow`, `green`, `blue`, `purple`이다.
+기본값은 `red`다.
+
+```bash
+python code/experiment/static_alignment_test.py \
+  --distance 2 \
+  --target-color red \
+  --color-min-area 500 \
+  --color-min-component-area 200
+```
+
+정렬 직전의 프레임 ID를 기준으로 잡고, 정렬 명령 시각 이후에 캡처된 새
+프레임만 검사한다.
+
+- `success`: 새 프레임에서 제한시간 안에 색상을 인식했다.
+- `color_not_detected`: 새 프레임은 들어왔지만 색상을 인식하지 못했다.
+- `camera_frame_timeout`: 제한시간 안에 새 프레임이 들어오지 않았다.
+- `uwb_timeout`: 제한시간 안에 유효 UWB 패킷을 받지 못했다.
+- `error`: 처리 중 예외가 발생했다.
+
+`color_visible`은 실제 새 프레임을 검사했을 때만 `0` 또는 `1`로 기록한다.
+새 프레임이 없거나 UWB 타임아웃으로 영상 판정 자체를 수행하지 못하면 빈
+값으로 남긴다. `color_success`는 전체 시도의 최종 성공 여부이므로 이 경우에도
+`0`이다.
+
+색상 실패 프레임 저장은 기본으로 활성화된다. 필요할 때만
+`--no-save-failure-frames`로 끌 수 있다.
+
+## 결과 저장
+
+기본 경로는 `result/static_alignment/`이다.
+
+```text
+result/static_alignment/
+└── run_YYYYMMDD_HHMMSS/
+    ├── static_alignment_results.csv
+    └── failed_frames/
+        └── attempt_001_color_not_detected.jpg
+```
+
+다른 상위 경로는 `--output-dir`로 지정한다.
+
+CSV 필드:
+
+| 필드 | 의미 |
+|---|---|
+| `attempt` | 시도 번호 |
+| `distance_m` | 수동으로 지정한 실험 거리 |
+| `interval_s` | 정렬 명령부터 색상을 기다리는 제한시간 |
+| `initial_gimbal_ros_deg` | 초기 짐벌각, ROS CCW 좌표계 |
+| `uwb_source` | UWB 송신 UDP 주소 |
+| `uwb_raw_azimuth_deg` | UWB 원시 CW 상대 방위각 |
+| `uwb_ros_azimuth_deg` | ROS CCW로 변환한 UWB 상대각 |
+| `target_calculated_ros_deg` | 초기각과 UWB 상대각으로 계산한 목표각 |
+| `gimbal_command_ros_deg` | 범위 제한 후 실제 적용한 짐벌 명령각 |
+| `servo_clipped` | 목표각이 서보 범위 때문에 제한됐는지 여부 |
+| `target_color` | 찾을 색상 |
+| `color_visible` | 판정한 새 프레임에서 색상이 보였는지 여부. 판정하지 못하면 빈 값 |
+| `color_success` | 해당 정렬 시도의 최종 색상 인식 성공 여부 |
+| `color_recognition_time_ms` | 정렬 명령부터 색상 판정 성공까지 걸린 시간 |
+| `camera_frame_id` | 판정에 사용한 프레임 번호 |
+| `camera_captured_ns` | 판정 프레임 캡처 시각, monotonic ns |
+| `failure_frame` | 실패 이미지의 실행 폴더 기준 상대 경로 |
+| `status` | 성공 또는 실패 원인 |
+| `started_at`, `finished_at` | 시도 시작 및 종료 시각 |
+| `error_message` | 예외 진단 메시지 |
+
+## 전체 옵션 예시
 
 ```bash
 python code/experiment/static_alignment_test.py \
   --distance 2 \
   --attempts 100 \
-  --servo-channel 0 \
-  --pca9685-address 0x40 \
   --device-index 4 \
-  --crop-scale 0.3 \
+  --crop-scale 1 \
+  --camera-warmup 5 \
   --initial-min -50 \
   --initial-max 50 \
+  --zero-settle-time 1 \
+  --initial-settle-time 1 \
+  --alignment-settle-time 1 \
+  --interval 0.2 \
+  --target-color red \
+  --servo-channel 0 \
+  --pca9685-address 0x40 \
   --uwb-host 0.0.0.0 \
   --uwb-port 5005 \
   --uwb-timeout 1 \
-  --interval 1 \
-  --settle-time 2 \
-  --zero-settle-time 2 \
-  --alignment-settle-time 2 \
-  --servo-drive-time 1
-```
-
-## 실시간 영상 표시
-
-```bash
-python code/experiment/static_alignment_test.py \
-  --distance 2 \
-  --live-stream
-```
-
-영상 창에서 `q`를 누르거나 터미널에서 `Ctrl+C`를 누르면 실험을 중단할 수 있다.
-
-## 서보 제어 신호 설정
-
-기본 동작에서는 각 이동 후 `--servo-drive-time` 동안만 서보 제어 신호를 유지한다.
-그 이후에는 유지 토크와 지터 비교를 위해 제어 신호를 비활성화한다.
-
-```bash
-python code/experiment/static_alignment_test.py \
-  --distance 2 \
-  --servo-drive-time 1
-```
-
-정렬 후에도 제어 신호와 유지 토크를 계속 활성화하려면 다음 옵션을 사용한다.
-
-```bash
-python code/experiment/static_alignment_test.py \
-  --distance 2 \
-  --keep-pwm-active
-```
-
-## 결과 저장
-
-기본 결과 경로는 `result/dynamic_qr/`다. 다른 위치를 사용하려면
-`--output-dir`을 지정한다.
-
-```bash
-python code/experiment/static_alignment_test.py \
-  --distance 2 \
   --output-dir result/static_alignment
 ```
 
-실행 시각마다 다음 구조의 폴더가 생성된다.
-
-```text
-result/static_alignment/
-└── run_20260724_153000/
-    ├── dynamic_qr_results.csv
-    └── failed_frames/
-```
-
-CSV에는 다음 항목이 저장된다.
-
-- 실험 거리
-- QR 탐지 시간
-- 초기 짐벌각
-- UWB 원시 방위각
-- 최종 짐벌 명령각
-- QR 가시 여부
-- QR 디코딩 성공 여부
-
-## 주요 옵션
-
-| 옵션 | 설명 |
-|---|---|
-| `--distance` | 수동으로 측정한 실험 거리(m), 필수 |
-| `--attempts` | 전체 반복 횟수 |
-| `--initial-min`, `--initial-max` | 무작위 초기각 범위 |
-| `--interval` | 안정화 후 QR을 탐지하는 시간 |
-| `--device-index` | RealSense 카메라 장치 번호 |
-| `--crop-scale` | QR 탐지에 사용할 중앙 영상 비율 |
-| `--servo-channel` | PCA9685 yaw 서보 채널 |
-| `--pca9685-address` | PCA9685 I2C 주소 |
-| `--uwb-host`, `--uwb-port` | UWB UDP 수신 주소 |
-| `--uwb-timeout` | 유효한 UWB 패킷을 기다리는 최대 시간 |
-| `--random-seed` | 무작위 초기각 순서를 재현하기 위한 시드 |
-| `--live-stream` | 실시간 카메라 영상 표시 |
-| `--output-dir` | 결과 저장 상위 경로 |
+`--live-stream`을 추가하면 영상을 표시하며, 영상 창에서 `q` 또는 터미널에서
+`Ctrl+C`로 중단할 수 있다.

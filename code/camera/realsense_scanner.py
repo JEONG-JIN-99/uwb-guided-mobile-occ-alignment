@@ -689,14 +689,29 @@ class HardwareScanner:
             captured_ns=last_snapshot.captured_ns,
         )
 
-    def detect_color_presence_until(self, deadline_ns, target_color=None):
-        """호출 이후 새 프레임 중 하나라도 선택 색상이 보이면 반환한다."""
+    def detect_color_presence_until(
+        self,
+        deadline_ns,
+        target_color=None,
+        after_frame_id=None,
+        after_captured_ns=None,
+    ):
+        """기준 시점 이후 새 프레임 중 하나라도 선택 색상이 보이면 반환한다.
+
+        ``after_frame_id``와 ``after_captured_ns``를 지정하면 두 기준을 모두
+        지난 프레임만 검사한다. 정렬 명령 직후의 제한시간을 측정할 때 명령
+        이전 프레임이 섞이지 않도록 하기 위한 옵션이다.
+        """
         if self.capture_thread is None or not self.capture_thread.is_alive():
             return ColorDetectionResult()
 
         snapshot = self.get_latest_frame()
         last_snapshot = snapshot
-        last_frame_id = snapshot.frame_id if snapshot is not None else 0
+        last_frame_id = (
+            int(after_frame_id)
+            if after_frame_id is not None
+            else snapshot.frame_id if snapshot is not None else 0
+        )
         last_result = None
 
         while time.monotonic_ns() < deadline_ns:
@@ -706,6 +721,11 @@ class HardwareScanner:
 
             last_snapshot = snapshot
             last_frame_id = snapshot.frame_id
+            if (
+                after_captured_ns is not None
+                and snapshot.captured_ns < int(after_captured_ns)
+            ):
+                continue
             result = self.detect_color_presence(
                 snapshot.frame,
                 target_color=target_color,

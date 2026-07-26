@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""짐벌을 무작위 초기각에 둔 뒤 UWB 정렬·안정화 후 QR 인식률을 측정한다."""
+"""무작위 초기각에서 UWB로 정렬한 뒤 제한시간 내 색상 인식률을 측정한다."""
 
 import argparse
 import csv
@@ -19,14 +19,27 @@ if str(CODE_DIR) not in sys.path:
 
 
 RESULT_FIELDS = (
+    "attempt",
     "distance_m",
     "interval_s",
-    "initial_gimbal_deg",
+    "initial_gimbal_ros_deg",
+    "uwb_source",
     "uwb_raw_azimuth_deg",
     "uwb_ros_azimuth_deg",
+    "target_calculated_ros_deg",
     "gimbal_command_ros_deg",
-    "qr_visible",
-    "qr_detected",
+    "servo_clipped",
+    "target_color",
+    "color_visible",
+    "color_success",
+    "color_recognition_time_ms",
+    "camera_frame_id",
+    "camera_captured_ns",
+    "failure_frame",
+    "status",
+    "started_at",
+    "finished_at",
+    "error_message",
 )
 
 
@@ -36,6 +49,7 @@ def normalize_angle(angle_deg):
 
 
 def estimate_tx_azimuth(initial_gimbal_deg, uwb_relative_azimuth_deg):
+    """UWB CW 상대각을 ROS CCW 좌표계의 절대 목표각으로 변환한다."""
     uwb_ros_azimuth_deg = -float(uwb_relative_azimuth_deg)
     return normalize_angle(initial_gimbal_deg + uwb_ros_azimuth_deg)
 
@@ -78,7 +92,9 @@ class UwbReceiver:
         self.socket.setblocking(True)
         try:
             while True:
-                remaining_s = (deadline_ns - time.monotonic_ns()) / 1_000_000_000
+                remaining_s = (
+                    deadline_ns - time.monotonic_ns()
+                ) / 1_000_000_000
                 if remaining_s <= 0:
                     return None
                 self.socket.settimeout(remaining_s)
@@ -103,12 +119,17 @@ class UwbReceiver:
 def build_parser():
     parser = argparse.ArgumentParser(
         description=(
-            "Move to a random initial angle, align from UWB, and test QR "
-            "recognition during the following detection window."
+            "Move to a random initial angle, align from UWB, and test color "
+            "recognition immediately after the alignment command."
         )
     )
     parser.add_argument("--device-index", type=int, default=4)
-    parser.add_argument("--crop-scale", type=float, default=0.3)
+    parser.add_argument(
+        "--crop-scale",
+        type=float,
+        default=1.0,
+        help="centered camera crop ratio (default: 1.0, no crop)",
+    )
     parser.add_argument(
         "--distance",
         type=float,
@@ -118,67 +139,93 @@ def build_parser():
     parser.add_argument(
         "--interval",
         type=float,
-        default=1.0,
-        help="QR detection window after alignment stabilization (default: 1.0)",
+        default=0.2,
+        help=(
+            "color recognition deadline measured from the alignment command "
+            "(default: 0.2)"
+        ),
     )
     parser.add_argument(
         "--attempts",
         type=int,
         default=100,
-        help="number of complete dynamic alignment attempts (default: 100)",
+        help="number of complete static alignment attempts (default: 100)",
     )
     parser.add_argument(
+        "--camera-warmup",
         "--warmup",
+        dest="camera_warmup",
         type=float,
-        default=1.0,
-        help="camera warmup after its capture thread starts (default: 1.0)",
+        default=5.0,
+        help=(
+            "camera auto-exposure/white-balance stabilization time "
+            "(default: 5.0)"
+        ),
     )
     parser.add_argument("--live-stream", action="store_true")
     parser.add_argument("--servo-channel", type=int, default=0)
-    parser.add_argument("--pca9685-address", type=lambda value: int(value, 0), default=0x40)
+    parser.add_argument(
+        "--pca9685-address",
+        type=lambda value: int(value, 0),
+        default=0x40,
+    )
     parser.add_argument(
         "--initial-min",
         type=int,
         default=-50,
-        help="minimum initial gimbal angle (default: -50)",
+        help="minimum initial ROS gimbal angle (default: -50)",
     )
     parser.add_argument(
         "--initial-max",
         type=int,
         default=50,
-        help="maximum initial gimbal angle (default: 50)",
+        help="maximum initial ROS gimbal angle (default: 50)",
     )
     parser.add_argument(
+        "--initial-settle-time",
         "--settle-time",
+        dest="initial_settle_time",
         type=float,
-        default=2.0,
-        help="stabilization time after moving to the random angle (default: 2.0)",
+        default=1.0,
+        help="stabilization after moving to the random angle (default: 1.0)",
     )
     parser.add_argument(
         "--zero-settle-time",
         type=float,
-        default=2.0,
-        help="stabilization time after returning to zero (default: 2.0)",
+        default=1.0,
+        help="stabilization after returning to zero (default: 1.0)",
     )
     parser.add_argument(
         "--alignment-settle-time",
         type=float,
-        default=2.0,
-        help="stabilization time before QR detection (default: 2.0)",
-    )
-    parser.add_argument(
-        "--servo-drive-time",
-        type=float,
         default=1.0,
         help=(
-            "time to keep PWM active after each move before disabling the "
-            "control signal (default: 1.0)"
+            "total stabilization period measured from the alignment command; "
+            "the color window is included in it (default: 1.0)"
         ),
     )
     parser.add_argument(
-        "--keep-pwm-active",
-        action="store_true",
-        help="do not disable PWM after moves; useful for A/B jitter comparison",
+        "--target-color",
+        choices=("red", "orange", "yellow", "green", "blue", "purple"),
+        default="red",
+    )
+    parser.add_argument(
+        "--color-min-area",
+        type=float,
+        default=500.0,
+        help="minimum total selected-color mask pixels (default: 500)",
+    )
+    parser.add_argument(
+        "--color-min-component-area",
+        type=float,
+        default=200.0,
+        help="minimum largest connected color area in pixels (default: 200)",
+    )
+    parser.add_argument(
+        "--save-failure-frames",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="save the last frame on color recognition failure (default: on)",
     )
     parser.add_argument("--uwb-host", default="0.0.0.0")
     parser.add_argument("--uwb-port", type=int, default=5005)
@@ -186,7 +233,7 @@ def build_parser():
     parser.add_argument("--random-seed", type=int, default=20260721)
     parser.add_argument(
         "--output-dir",
-        default=str(PROJECT_ROOT / "result" / "dynamic_qr"),
+        default=str(PROJECT_ROOT / "result" / "static_alignment"),
     )
     return parser
 
@@ -199,13 +246,14 @@ def validate_args(parser, args):
     if args.interval <= 0:
         parser.error("--interval must be greater than 0")
     if (
-        args.warmup < 0
-        or args.settle_time < 0
+        args.camera_warmup < 0
+        or args.initial_settle_time < 0
         or args.zero_settle_time < 0
         or args.alignment_settle_time < 0
-        or args.servo_drive_time < 0
     ):
-        parser.error("warmup and settle times must be 0 or greater")
+        parser.error("camera warmup and settle times must be 0 or greater")
+    if args.alignment_settle_time < args.interval:
+        parser.error("--alignment-settle-time must be at least --interval")
     if args.uwb_timeout <= 0:
         parser.error("--uwb-timeout must be greater than 0")
     if not 0 < args.crop_scale <= 1:
@@ -214,43 +262,45 @@ def validate_args(parser, args):
         parser.error("initial angle range must stay within -90 to 90 degrees")
     if args.initial_min > args.initial_max:
         parser.error("--initial-min must not exceed --initial-max")
+    if args.color_min_area < 0:
+        parser.error("--color-min-area must be 0 or greater")
+    if args.color_min_component_area < 0:
+        parser.error("--color-min-component-area must be 0 or greater")
 
 
 def iso_now():
     return datetime.now().astimezone().isoformat(timespec="milliseconds")
 
 
-def show_result(cv2, result, window_name):
+def show_live_during_wait(cv2, scanner, duration_s, window_name):
+    """안정화 대기 중에도 선택적으로 영상 창을 갱신한다."""
+    deadline_ns = time.monotonic_ns() + int(duration_s * 1_000_000_000)
+    while time.monotonic_ns() < deadline_ns:
+        if cv2 is None:
+            remaining_s = (
+                deadline_ns - time.monotonic_ns()
+            ) / 1_000_000_000
+            time.sleep(max(0.0, remaining_s))
+            return False
+        snapshot = scanner.get_latest_frame()
+        if snapshot is not None:
+            cv2.imshow(window_name, snapshot.frame)
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            return True
+        time.sleep(0.02)
+    return False
+
+
+def show_color_result(cv2, result, target_color, window_name):
     if cv2 is None or result.frame is None:
         return False
-
     display = result.frame.copy()
-    height, width = display.shape[:2]
-    color = (0, 0, 255)
-    thickness = max(3, min(height, width) // 150)
-    if result.detected and result.rect is not None:
-        x, y, qr_width, qr_height = result.rect
-        cv2.rectangle(
-            display,
-            (x, y),
-            (x + qr_width, y + qr_height),
-            color,
-            thickness,
-        )
-        label = f"DETECTED {result.data or ''}"
-    elif result.visible:
-        color = (0, 255, 255)
-        label = "VISIBLE: QR pattern detected"
-    else:
-        cv2.rectangle(
-            display,
-            (thickness, thickness),
-            (width - thickness, height - thickness),
-            color,
-            thickness,
-        )
-        label = "NOT VISIBLE"
-
+    label = (
+        f"{target_color.upper()} DETECTED"
+        if result.visible
+        else f"{target_color.upper()} NOT DETECTED"
+    )
+    color = (0, 255, 0) if result.visible else (0, 0, 255)
     cv2.putText(
         display,
         label,
@@ -265,41 +315,17 @@ def show_result(cv2, result, window_name):
     return cv2.waitKey(1) & 0xFF == ord("q")
 
 
-def show_live_during_wait(cv2, scanner, duration_s, window_name):
-    """안정화 대기 중에도 VNC 영상 창을 갱신한다."""
-    deadline_ns = time.monotonic_ns() + int(duration_s * 1_000_000_000)
-    while time.monotonic_ns() < deadline_ns:
-        if cv2 is None:
-            time.sleep(max(0.0, (deadline_ns - time.monotonic_ns()) / 1_000_000_000))
-            return False
-        snapshot = scanner.get_latest_frame()
-        if snapshot is not None:
-            cv2.imshow(window_name, snapshot.frame)
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            return True
-        time.sleep(0.02)
-    return False
-
-
-def settle_after_move(
-    cv2,
-    scanner,
-    gimbal,
-    total_settle_s,
-    servo_drive_s,
-    keep_pwm_active,
-    window_name,
-):
-    """이동 PWM 후 신호를 끄고 남은 안정화 시간을 기다린다."""
-    active_s = min(total_settle_s, servo_drive_s)
-    if show_live_during_wait(cv2, scanner, active_s, window_name):
-        return True
-
-    if not keep_pwm_active:
-        gimbal.disable_control_signal()
-
-    remaining_s = max(0.0, total_settle_s - active_s)
-    return show_live_during_wait(cv2, scanner, remaining_s, window_name)
+def save_failure_frame(cv2, run_dir, attempt, status, color_result):
+    if color_result.frame is None:
+        return ""
+    relative_path = (
+        Path("failed_frames") / f"attempt_{attempt:03d}_{status}.jpg"
+    )
+    absolute_path = run_dir / relative_path
+    absolute_path.parent.mkdir(parents=True, exist_ok=True)
+    if not cv2.imwrite(str(absolute_path), color_result.frame):
+        raise RuntimeError(f"failed to save color failure frame: {absolute_path}")
+    return str(relative_path)
 
 
 def main(argv=None):
@@ -307,34 +333,28 @@ def main(argv=None):
     args = parser.parse_args(argv)
     validate_args(parser, args)
 
-    from gimbal.gimbal_controller_yaw import GimbalController
     from camera.realsense_scanner import HardwareScanner
+    from gimbal.gimbal_controller_yaw import GimbalController
 
     import cv2 as cv2_module
 
     cv2 = None
-    window_name = "Dynamic QR Interval Test"
+    window_name = "Static Alignment Color Test"
     if args.live_stream:
         cv2 = cv2_module
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = Path(args.output_dir) / f"run_{stamp}"
-    results_path = run_dir / "dynamic_qr_results.csv"
+    results_path = run_dir / "static_alignment_results.csv"
 
     print(f"Attempts: {args.attempts}")
     print(f"Experiment distance: {args.distance:g}m")
     print(f"Random initial range: {args.initial_min} to {args.initial_max} deg")
-    print(f"Post-alignment settle time: {args.alignment_settle_time:g}s")
-    print(
-        "Servo PWM after move: "
-        + (
-            "kept active"
-            if args.keep_pwm_active
-            else f"disabled after {args.servo_drive_time:g}s"
-        )
-    )
-    print(f"QR detection window: {args.interval:g}s")
+    print(f"Camera color warmup: {args.camera_warmup:g}s")
+    print(f"Color recognition window: {args.interval:g}s from alignment command")
+    print(f"Post-alignment total settle time: {args.alignment_settle_time:g}s")
+    print("Servo PWM: kept active between moves")
     print(f"Results: {results_path}")
 
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -343,8 +363,7 @@ def main(argv=None):
     uwb = None
     scanner = None
     attempts_completed = 0
-    visible_count = 0
-    detected_count = 0
+    success_count = 0
     stop_requested = False
 
     try:
@@ -357,11 +376,15 @@ def main(argv=None):
             device_index=args.device_index,
             crop_scale=args.crop_scale,
             live_stream=False,
+            color_min_area_px=args.color_min_area,
+            color_min_component_area_px=args.color_min_component_area,
+            target_color=args.target_color,
         )
         print(
-            f"Starting camera capture and warming up for {args.warmup:g}s."
+            "Starting camera capture and stabilizing color for "
+            f"{args.camera_warmup:g}s."
         )
-        if not scanner.start_capture(warmup_sec=args.warmup):
+        if not scanner.start_capture(warmup_sec=args.camera_warmup):
             raise RuntimeError(f"failed to open /dev/video{args.device_index}")
 
         with results_path.open("w", newline="", encoding="utf-8") as result_file:
@@ -376,9 +399,12 @@ def main(argv=None):
                         "attempt": attempt,
                         "distance_m": f"{args.distance:.6f}",
                         "interval_s": f"{args.interval:.6f}",
-                        "qr_visible": False,
-                        "qr_detected": False,
-                        "servo_clipped": False,
+                        "target_color": args.target_color,
+                        # 실제 새 프레임을 판정하기 전에는 미검출(0)이 아니라
+                        # 판정하지 않음(빈 값)으로 구분한다.
+                        "color_visible": "",
+                        "color_success": 0,
+                        "servo_clipped": 0,
                         "status": "error",
                         "started_at": iso_now(),
                     }
@@ -386,31 +412,25 @@ def main(argv=None):
                 initial_deg = random_generator.randint(
                     args.initial_min, args.initial_max
                 )
-                row["initial_gimbal_deg"] = initial_deg
+                row["initial_gimbal_ros_deg"] = initial_deg
 
                 try:
                     print(f"[{attempt:03d}/{args.attempts}] zero -> {initial_deg} deg")
                     gimbal.move_to(0.0)
-                    if settle_after_move(
+                    if show_live_during_wait(
                         cv2,
                         scanner,
-                        gimbal,
                         args.zero_settle_time,
-                        args.servo_drive_time,
-                        args.keep_pwm_active,
                         window_name,
                     ):
                         stop_requested = True
                         break
 
                     gimbal.move_to(float(initial_deg))
-                    if settle_after_move(
+                    if show_live_during_wait(
                         cv2,
                         scanner,
-                        gimbal,
-                        args.settle_time,
-                        args.servo_drive_time,
-                        args.keep_pwm_active,
+                        args.initial_settle_time,
                         window_name,
                     ):
                         stop_requested = True
@@ -422,86 +442,150 @@ def main(argv=None):
                         row["status"] = "uwb_timeout"
                         print("  UWB timeout")
                     else:
-                        (_uwb_distance, raw_azimuth, _elevation), _received_ns, address = uwb_result
-                        requested = estimate_tx_azimuth(initial_deg, raw_azimuth)
+                        (
+                            (_uwb_distance, raw_azimuth, _elevation),
+                            _received_ns,
+                            address,
+                        ) = uwb_result
+                        target_calculated = estimate_tx_azimuth(
+                            initial_deg,
+                            raw_azimuth,
+                        )
                         ros_azimuth = -raw_azimuth
-                        command, clipped = clamp_servo_command(requested, -90.0, 90.0)
+                        command, clipped = clamp_servo_command(
+                            target_calculated,
+                            -90.0,
+                            90.0,
+                        )
                         row.update(
                             {
+                                "uwb_source": f"{address[0]}:{address[1]}",
                                 "uwb_raw_azimuth_deg": raw_azimuth,
                                 "uwb_ros_azimuth_deg": ros_azimuth,
+                                "target_calculated_ros_deg": target_calculated,
                                 "gimbal_command_ros_deg": command,
-                                "servo_clipped": clipped,
-                                "uwb_source": f"{address[0]}:{address[1]}",
+                                "servo_clipped": int(clipped),
                             }
                         )
 
-                        # UWB 정렬 후 먼저 지정 시간 동안 완전히 안정화한다.
-                        # QR 검사는 안정화가 끝난 시점부터 별도의 시간 구간에서 수행한다.
+                        baseline = scanner.get_latest_frame()
+                        baseline_frame_id = (
+                            baseline.frame_id if baseline is not None else 0
+                        )
+                        alignment_commanded_ns = time.monotonic_ns()
                         gimbal.move_to(command)
-                        if settle_after_move(
+                        color_deadline_ns = alignment_commanded_ns + int(
+                            args.interval * 1_000_000_000
+                        )
+                        color_result = scanner.detect_color_presence_until(
+                            color_deadline_ns,
+                            target_color=args.target_color,
+                            after_frame_id=baseline_frame_id,
+                            after_captured_ns=alignment_commanded_ns,
+                        )
+                        detection_completed_ns = time.monotonic_ns()
+
+                        got_new_frame = (
+                            color_result.frame_id is not None
+                            and color_result.frame_id > baseline_frame_id
+                            and color_result.captured_ns is not None
+                            and color_result.captured_ns
+                            >= alignment_commanded_ns
+                            and color_result.captured_ns
+                            <= color_deadline_ns
+                        )
+                        color_success = bool(
+                            got_new_frame and color_result.visible
+                        )
+                        if color_success:
+                            status = "success"
+                            success_count += 1
+                        elif not got_new_frame:
+                            status = "camera_frame_timeout"
+                        else:
+                            status = "color_not_detected"
+
+                        recognition_time_ms = ""
+                        if color_success:
+                            recognition_time_ms = (
+                                detection_completed_ns
+                                - alignment_commanded_ns
+                            ) / 1_000_000
+
+                        failure_frame = ""
+                        if not color_success and args.save_failure_frames:
+                            failure_frame = save_failure_frame(
+                                cv2_module,
+                                run_dir,
+                                attempt,
+                                status,
+                                color_result,
+                            )
+
+                        row.update(
+                            {
+                                "color_visible": (
+                                    int(color_result.visible)
+                                    if got_new_frame
+                                    else ""
+                                ),
+                                "color_success": int(color_success),
+                                "color_recognition_time_ms": recognition_time_ms,
+                                "camera_frame_id": (
+                                    color_result.frame_id
+                                    if color_result.frame_id is not None
+                                    else ""
+                                ),
+                                "camera_captured_ns": (
+                                    color_result.captured_ns
+                                    if color_result.captured_ns is not None
+                                    else ""
+                                ),
+                                "failure_frame": failure_frame,
+                                "status": status,
+                            }
+                        )
+
+                        alignment_settle_deadline_ns = (
+                            alignment_commanded_ns
+                            + int(
+                                args.alignment_settle_time
+                                * 1_000_000_000
+                            )
+                        )
+                        remaining_settle_s = max(
+                            0.0,
+                            (
+                                alignment_settle_deadline_ns
+                                - time.monotonic_ns()
+                            )
+                            / 1_000_000_000,
+                        )
+                        if show_live_during_wait(
                             cv2,
                             scanner,
-                            gimbal,
-                            args.alignment_settle_time,
-                            args.servo_drive_time,
-                            args.keep_pwm_active,
+                            remaining_settle_s,
                             window_name,
                         ):
                             stop_requested = True
 
-                        qr_started_ns = time.monotonic_ns()
-                        qr_deadline_ns = (
-                            qr_started_ns + int(args.interval * 1_000_000_000)
-                        )
-                        qr_result = scanner.detect_until(qr_deadline_ns)
-
-                        if qr_result.detected:
-                            detected_count += 1
-                            row.update(
-                                {
-                                    "qr_visible": True,
-                                    "qr_detected": True,
-                                    "qr_data": qr_result.data or "",
-                                    "status": "success",
-                                }
-                            )
-                        elif qr_result.visible:
-                            row.update(
-                                {
-                                    "qr_visible": True,
-                                    "qr_detected": False,
-                                    "status": "visible_not_decoded",
-                                }
-                            )
-                        else:
-                            row["status"] = "qr_timeout"
-
-                        if not qr_result.detected and qr_result.frame is not None:
-                            failed_frames_dir = run_dir / "failed_frames"
-                            failed_frames_dir.mkdir(parents=True, exist_ok=True)
-                            failure_path = failed_frames_dir / (
-                                f"attempt_{attempt:03d}_{row['status']}.jpg"
-                            )
-                            if not cv2_module.imwrite(
-                                str(failure_path), qr_result.frame
-                            ):
-                                raise RuntimeError(
-                                    f"failed to save QR failure frame: {failure_path}"
-                                )
-                            print(f"  Failure frame: {failure_path}")
-
-                        if qr_result.visible:
-                            visible_count += 1
-
                         print(
                             f"  UWB raw={raw_azimuth:.2f} deg, "
                             f"UWB ROS={ros_azimuth:.2f} deg, "
-                            f"ROS command={command:.2f} deg, "
-                            f"visible={int(row['qr_visible'])}, "
-                            f"detected={int(row['qr_detected'])}"
+                            f"target={target_calculated:.2f} deg, "
+                            f"command={command:.2f} deg, "
+                            f"color_success={int(color_success)}, "
+                            f"frame_id={row['camera_frame_id']}, "
+                            f"status={status}"
                         )
-                        if show_result(cv2, qr_result, window_name):
+                        if failure_frame:
+                            print(f"  Failure frame: {run_dir / failure_frame}")
+                        if show_color_result(
+                            cv2,
+                            color_result,
+                            args.target_color,
+                            window_name,
+                        ):
                             stop_requested = True
 
                 except Exception as exc:
@@ -510,18 +594,7 @@ def main(argv=None):
                     print(f"  ERROR: {row['error_message']}")
                 finally:
                     row["finished_at"] = iso_now()
-                    writer.writerow(
-                        {
-                            "distance_m": row["distance_m"],
-                            "interval_s": row["interval_s"],
-                            "initial_gimbal_deg": row["initial_gimbal_deg"],
-                            "uwb_raw_azimuth_deg": row["uwb_raw_azimuth_deg"],
-                            "uwb_ros_azimuth_deg": row["uwb_ros_azimuth_deg"],
-                            "gimbal_command_ros_deg": row["gimbal_command_ros_deg"],
-                            "qr_visible": row["qr_visible"],
-                            "qr_detected": row["qr_detected"],
-                        }
-                    )
+                    writer.writerow(row)
                     result_file.flush()
                     attempts_completed += 1
                     gimbal.move_to(0.0)
@@ -542,20 +615,20 @@ def main(argv=None):
             uwb.close()
         if scanner is not None:
             scanner.stop()
+        if cv2 is not None:
+            cv2.destroyAllWindows()
 
-    visible_rate = (
-        visible_count / attempts_completed * 100 if attempts_completed else 0.0
-    )
-    detected_rate = (
-        detected_count / attempts_completed * 100 if attempts_completed else 0.0
+    success_rate = (
+        success_count / attempts_completed * 100
+        if attempts_completed
+        else 0.0
     )
     print(
         f"Summary: attempts={attempts_completed}, "
-        f"visible={visible_count} ({visible_rate:.1f}%), "
-        f"detected={detected_count} ({detected_rate:.1f}%)"
+        f"color_success={success_count} ({success_rate:.1f}%)"
     )
     print(f"Results saved to: {results_path}")
-    return 0 if visible_count else 2
+    return 0 if success_count else 2
 
 
 if __name__ == "__main__":
