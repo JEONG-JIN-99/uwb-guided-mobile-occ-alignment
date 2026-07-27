@@ -40,6 +40,7 @@ Thumbs.db
 .agents/
 .codex/
 .antigravitycli/
+docs/
 
 # Archives generated from source
 *.zip

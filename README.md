@@ -48,13 +48,13 @@ CSV 저장` 구조입니다.
 
 ### 정적 alignment 실험
 
-`code/experiment/static_alignment_test.py`는 짐벌을 무작위 초기각으로 이동한 뒤
-UWB로 정렬하고, 정렬 명령 시점부터 0.2초 안에 새 카메라 프레임에서 선택한
-색상이 인식되는지 측정합니다. 기본 색상은 빨간색이고 영상 크롭은 하지
-않습니다.
+`code/experiment/static_alignment/static_alignment_test.py`는 짐벌을 무작위
+초기각으로 이동한 뒤 UWB로 정렬하고, 정렬 명령 시점부터 0.2초 안에 새
+카메라 프레임에서 선택한 색상이 인식되는지 측정합니다. 기본 색상은
+빨간색이고 영상은 중앙 60%를 크롭해 사용합니다.
 
 ```bash
-python code/experiment/static_alignment_test.py \
+python code/experiment/static_alignment/static_alignment_test.py \
   --distance 2 \
   --attempts 100 \
   --servo-channel 0 \
@@ -71,7 +71,7 @@ python code/experiment/static_alignment_test.py \
 타임아웃이 발생하면 실패 원인과 마지막 프레임도 저장됩니다.
 
 전체 옵션과 안정화 시간의 의미는
-[`code/experiment/README.md`](code/experiment/README.md)를 참고합니다.
+[`code/experiment/static_alignment/README.md`](code/experiment/static_alignment/README.md)를 참고합니다.
 
 ### 2. 짐벌 제어 코드
 

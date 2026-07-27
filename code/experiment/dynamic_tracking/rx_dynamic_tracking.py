@@ -98,7 +98,7 @@ def build_parser():
         metavar="EPOCH_SEC",
     )
     parser.add_argument("--device-index", type=int, default=4)
-    parser.add_argument("--crop-scale", type=float, default=0.3)
+    parser.add_argument("--crop-scale", type=float, default=0.6)
     parser.add_argument(
         "--camera-warmup",
         type=float,
@@ -110,11 +110,11 @@ def build_parser():
         choices=("red", "orange", "yellow", "green", "blue", "purple"),
         default="red",
     )
-    parser.add_argument("--color-min-area", type=float, default=500.0)
+    parser.add_argument("--color-min-area", type=float, default=125.0)
     parser.add_argument(
         "--color-min-component-area",
         type=float,
-        default=200.0,
+        default=50.0,
     )
     parser.add_argument(
         "--save-failure-frames",

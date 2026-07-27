@@ -23,8 +23,10 @@ from pyzbar import pyzbar
 
 COLOR_HSV_RANGES = {
     # 인쇄된 선명한 빨간색 표식만 대상으로 삼아 어둡고 탁한 갈색 계열을
-    # 제외하도록 hue 범위를 좁히고 채도/밝기 하한을 높인다.
-    "red": (((0, 150, 110), (7, 255, 255)), ((173, 150, 110), (180, 255, 255))),
+    # 제외하도록 hue 범위는 좁게 유지한다. 중앙 60% 크롭에서는 표식의
+    # 마스크 면적이 작아지므로 조명·노출 변화에 견디도록 채도 하한은 130을
+    # 사용한다.
+    "red": (((0, 130, 110), (7, 255, 255)), ((173, 130, 110), (180, 255, 255))),
     "orange": (((10, 100, 80), (25, 255, 255)),),
     "yellow": (((20, 100, 80), (35, 255, 255)),),
     "green": (((35, 100, 80), (85, 255, 255)),),
@@ -72,7 +74,10 @@ class ColorDetectionResult:
     center: Optional[tuple[int, int]] = None
     distance_px: Optional[float] = None
     area_px: Optional[float] = None
+    area_ratio_pct: Optional[float] = None
     component_area_px: Optional[float] = None
+    saturation_mean: Optional[float] = None
+    value_mean: Optional[float] = None
     circularity: Optional[float] = None
     frame_id: Optional[int] = None
     captured_ns: Optional[int] = None
@@ -85,8 +90,8 @@ class HardwareScanner:
         device_index=0,
         crop_scale=1.0,
         live_stream=False,
-        color_min_area_px=500.0,
-        color_min_component_area_px=200.0,
+        color_min_area_px=125.0,
+        color_min_component_area_px=50.0,
         color_min_circularity=0.6,
         target_color="red",
     ):
@@ -375,6 +380,17 @@ class HardwareScanner:
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
         total_area = float(cv2.countNonZero(mask))
+        area_ratio_pct = total_area / mask.size * 100.0
+        saturation_mean = (
+            float(cv2.mean(hsv[:, :, 1], mask=mask)[0])
+            if total_area > 0
+            else None
+        )
+        value_mean = (
+            float(cv2.mean(hsv[:, :, 2], mask=mask)[0])
+            if total_area > 0
+            else None
+        )
 
         contours, _hierarchy = cv2.findContours(
             mask,
@@ -386,7 +402,10 @@ class HardwareScanner:
                 visible=False,
                 frame=frame,
                 area_px=total_area,
+                area_ratio_pct=area_ratio_pct,
                 component_area_px=0.0,
+                saturation_mean=saturation_mean,
+                value_mean=value_mean,
             )
 
         contour = max(contours, key=cv2.contourArea)
@@ -408,7 +427,10 @@ class HardwareScanner:
                 visible=False,
                 frame=frame,
                 area_px=total_area,
+                area_ratio_pct=area_ratio_pct,
                 component_area_px=component_area,
+                saturation_mean=saturation_mean,
+                value_mean=value_mean,
                 circularity=circularity,
             )
 
@@ -426,7 +448,10 @@ class HardwareScanner:
             center=(center_x, center_y),
             distance_px=distance,
             area_px=total_area,
+            area_ratio_pct=area_ratio_pct,
             component_area_px=component_area,
+            saturation_mean=saturation_mean,
+            value_mean=value_mean,
             circularity=circularity,
             rect=(x, y, rect_width, rect_height),
         )
@@ -673,6 +698,10 @@ class HardwareScanner:
                     center=result.center,
                     distance_px=result.distance_px,
                     area_px=result.area_px,
+                    area_ratio_pct=result.area_ratio_pct,
+                    component_area_px=result.component_area_px,
+                    saturation_mean=result.saturation_mean,
+                    value_mean=result.value_mean,
                     circularity=result.circularity,
                     frame_id=snapshot.frame_id,
                     captured_ns=snapshot.captured_ns,
@@ -738,7 +767,10 @@ class HardwareScanner:
                     center=result.center,
                     distance_px=result.distance_px,
                     area_px=result.area_px,
+                    area_ratio_pct=result.area_ratio_pct,
                     component_area_px=result.component_area_px,
+                    saturation_mean=result.saturation_mean,
+                    value_mean=result.value_mean,
                     circularity=result.circularity,
                     frame_id=snapshot.frame_id,
                     captured_ns=snapshot.captured_ns,
@@ -761,7 +793,10 @@ class HardwareScanner:
             center=last_result.center,
             distance_px=last_result.distance_px,
             area_px=last_result.area_px,
+            area_ratio_pct=last_result.area_ratio_pct,
             component_area_px=last_result.component_area_px,
+            saturation_mean=last_result.saturation_mean,
+            value_mean=last_result.value_mean,
             circularity=last_result.circularity,
             frame_id=last_snapshot.frame_id,
             captured_ns=last_snapshot.captured_ns,
