@@ -1,3 +1,4 @@
+import queue
 import sys
 import unittest
 from pathlib import Path
@@ -10,6 +11,8 @@ if str(CODE_DIR) not in sys.path:
 
 from experiment.dynamic_tracking.common import (
     ALIGNMENT_PERIOD_SEC,
+    LatestUwbReceiver,
+    UwbSample,
     calculate_alignment,
     distance_trajectory,
     parse_uwb_packet,
@@ -27,6 +30,24 @@ from experiment.dynamic_tracking.tx_dynamic_tracking import (
 
 
 class DynamicTrackingTests(unittest.TestCase):
+    @staticmethod
+    def make_uwb_sample(received_monotonic_ns=101):
+        return UwbSample(
+            distance_m=2.0,
+            raw_azimuth_deg=10.0,
+            elevation_deg=0.0,
+            source="127.0.0.1:5005",
+            received_monotonic_ns=received_monotonic_ns,
+        )
+
+    @staticmethod
+    def make_receiver(reuse_latest):
+        receiver = LatestUwbReceiver.__new__(LatestUwbReceiver)
+        receiver._queue = queue.Queue(maxsize=1)
+        receiver._reuse_latest = reuse_latest
+        receiver._last_selection_sample = None
+        return receiver
+
     def test_parse_valid_uwb_packet(self):
         self.assertEqual(
             parse_uwb_packet(b"1,2.5,-41.3,0.7"),
@@ -66,6 +87,35 @@ class DynamicTrackingTests(unittest.TestCase):
         self.assertEqual(distance_trajectory(1), "fixed_radius_arc")
         self.assertEqual(distance_trajectory(3), "fixed_radius_arc")
 
+    def test_latest_uwb_receiver_reuses_last_selected_packet_when_enabled(self):
+        receiver = self.make_receiver(reuse_latest=True)
+        receiver._queue.put_nowait(self.make_uwb_sample())
+        first = receiver.take_latest_after(100)
+        reused = receiver.take_latest_after(100)
+
+        self.assertIsNotNone(first)
+        self.assertFalse(first.reused)
+        self.assertIsNotNone(reused)
+        self.assertTrue(reused.reused)
+        self.assertEqual(reused.sample, first.sample)
+
+    def test_latest_uwb_receiver_does_not_reuse_when_disabled(self):
+        receiver = self.make_receiver(reuse_latest=False)
+        receiver._queue.put_nowait(self.make_uwb_sample())
+        first = receiver.take_latest_after(100)
+
+        self.assertIsNotNone(first)
+        self.assertFalse(first.reused)
+        self.assertIsNone(receiver.take_latest_after(100))
+
+    def test_packet_received_before_start_is_never_reused(self):
+        receiver = self.make_receiver(reuse_latest=True)
+        receiver._queue.put_nowait(
+            self.make_uwb_sample(received_monotonic_ns=99)
+        )
+        self.assertIsNone(receiver.take_latest_after(100))
+        self.assertIsNone(receiver.take_latest_after(100))
+
     def test_rx_defaults_and_schema(self):
         parser = build_rx_parser()
         args = parser.parse_args(
@@ -86,6 +136,7 @@ class DynamicTrackingTests(unittest.TestCase):
         self.assertIn("color_visible", RX_FIELDS)
         self.assertIn("camera_frame_id", RX_FIELDS)
         self.assertIn("failure_frame", RX_FIELDS)
+        self.assertIn("uwb_packet_reused", RX_FIELDS)
 
     def test_tx_defaults_and_schema(self):
         parser = build_tx_parser()
@@ -103,6 +154,7 @@ class DynamicTrackingTests(unittest.TestCase):
         self.assertEqual(args.yaw_pin, 18)
         self.assertIn("previous_gimbal_ros_deg", TX_FIELDS)
         self.assertIn("target_calculated_ros_deg", TX_FIELDS)
+        self.assertIn("uwb_packet_reused", TX_FIELDS)
         self.assertNotIn("color_visible", TX_FIELDS)
 
 

@@ -43,6 +43,7 @@ TX_FIELDS = (
     "previous_gimbal_ros_deg",
     "uwb_source",
     "uwb_received_monotonic_ns",
+    "uwb_packet_reused",
     "uwb_raw_azimuth_deg",
     "uwb_ros_azimuth_deg",
     "correction_ros_deg",
@@ -161,7 +162,12 @@ class TxResultWriter:
             self.logger.close()
 
 
-def main(argv=None):
+def main(
+    argv=None,
+    *,
+    reuse_uwb_packets=True,
+    experiment_code="dynamic_tracking",
+):
     parser = build_parser()
     args = parser.parse_args(argv)
     validate_args(parser, args)
@@ -185,11 +191,15 @@ def main(argv=None):
     try:
         gimbal = GPIOGimbalController(yaw_pin=args.yaw_pin)
         gimbal.move_to(args.initial_deg)
-        uwb = LatestUwbReceiver(args.host, args.port)
+        uwb = LatestUwbReceiver(
+            args.host,
+            args.port,
+            reuse_latest=reuse_uwb_packets,
+        )
         uwb.start()
         logger = ResultLogger(
             target_dir_name="result",
-            experiment_code="dynamic_tracking",
+            experiment_code=experiment_code,
             experiment_id=args.experiment_id,
             node_id="tx",
             fieldnames=TX_FIELDS,
@@ -202,6 +212,7 @@ def main(argv=None):
         experiment_start_ns = wait_until_utc_ns(args.start_utc)
         print(
             "[START] Tx dynamic tracking started; "
+            f"UWB packet reuse={'on' if reuse_uwb_packets else 'off'}; "
             "press Ctrl+C to stop manually"
         )
 
@@ -227,10 +238,11 @@ def main(argv=None):
             )
 
             try:
-                uwb_sample = uwb.take_latest_after(experiment_start_ns)
-                if uwb_sample is None:
+                uwb_selection = uwb.take_latest_after(experiment_start_ns)
+                if uwb_selection is None:
                     row["status"] = "uwb_unavailable"
                 else:
+                    uwb_sample = uwb_selection.sample
                     previous_deg = gimbal.current_degree
                     alignment = calculate_alignment(
                         previous_deg,
@@ -250,6 +262,9 @@ def main(argv=None):
                             "uwb_source": uwb_sample.source,
                             "uwb_received_monotonic_ns": (
                                 uwb_sample.received_monotonic_ns
+                            ),
+                            "uwb_packet_reused": int(
+                                uwb_selection.reused
                             ),
                             "uwb_raw_azimuth_deg": (
                                 uwb_sample.raw_azimuth_deg

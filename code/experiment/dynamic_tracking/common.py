@@ -24,6 +24,12 @@ class UwbSample:
 
 
 @dataclass(frozen=True)
+class UwbSelection:
+    sample: UwbSample
+    reused: bool
+
+
+@dataclass(frozen=True)
 class AlignmentCommand:
     uwb_ros_azimuth_deg: float
     correction_ros_deg: float
@@ -81,13 +87,21 @@ def calculate_alignment(previous_gimbal_ros_deg, uwb_raw_azimuth_deg):
 
 
 class LatestUwbReceiver:
-    """유효한 미처리 UWB 패킷 중 가장 최신 패킷 하나만 유지한다."""
+    """최신 UWB 패킷을 유지하고 설정에 따라 마지막 선택값을 재사용한다."""
 
-    def __init__(self, host, port, warning_callback=print):
+    def __init__(
+        self,
+        host,
+        port,
+        warning_callback=print,
+        reuse_latest=False,
+    ):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.bind((host, int(port)))
         self.socket.settimeout(0.2)
         self._queue = queue.Queue(maxsize=1)
+        self._reuse_latest = bool(reuse_latest)
+        self._last_selection_sample = None
         self._stop_event = threading.Event()
         self._warning_callback = warning_callback
         self._thread = threading.Thread(
@@ -141,14 +155,21 @@ class LatestUwbReceiver:
                     pass
 
     def take_latest_after(self, cutoff_monotonic_ns):
-        """기준시각 이후 받은 최신 미처리 패킷을 한 번만 반환한다."""
+        """기준시각 이후 최신 패킷과 재사용 여부를 반환한다."""
         try:
             sample = self._queue.get_nowait()
         except queue.Empty:
+            if self._reuse_latest and self._last_selection_sample is not None:
+                return UwbSelection(
+                    sample=self._last_selection_sample,
+                    reused=True,
+                )
             return None
         if sample.received_monotonic_ns < int(cutoff_monotonic_ns):
+            self._last_selection_sample = None
             return None
-        return sample
+        self._last_selection_sample = sample
+        return UwbSelection(sample=sample, reused=False)
 
     def close(self):
         self._stop_event.set()

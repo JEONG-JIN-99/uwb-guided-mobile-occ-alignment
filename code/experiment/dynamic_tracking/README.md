@@ -7,9 +7,41 @@
   다음 정렬 전까지 색상을 인식한다.
 - `tx_dynamic_tracking.py`: Raspberry Pi GPIO 50Hz PWM으로 Tx yaw 짐벌만
   정렬한다.
+- `rx_dynamic_tracking_no_packet_reuse.py`,
+  `tx_dynamic_tracking_no_packet_reuse.py`: 각 UWB 패킷을 한 번만 사용하는
+  기존 동작의 보존 버전이다.
 
 두 프로그램 모두 사용자가 `Ctrl+C`를 누를 때까지 계속 실행한다. 현재 종료
 시각이나 샘플 수에 의한 자동 종료 조건은 없다.
+
+## 실험 전 Rx 짐벌·카메라 중앙 정렬
+
+동적 추적을 시작하기 전에 카메라가 연결된 Rx 장치에서 다음 준비 스크립트를
+실행한다. 처음 실행하는 장치에서는 프로젝트 의존성을 먼저 설치해야 한다.
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+```bash
+python code/experiment/dynamic_tracking/dir_init.py \
+  --device-index 4 \
+  --servo-channel 0 \
+  --pca9685-address 0x40 \
+  --crop-scale 1.0 \
+  --live-stream
+```
+
+스크립트는 Rx 짐벌을 ROS yaw 0도로 이동해 3초간 안정화한 뒤 PWM 신호를
+끄고, 카메라 화면 중앙에 빨간 십자선을 표시한다. 십자선을 기준으로 카메라와
+실험 표식의 중앙을 맞춘 다음 `q` 또는 `Esc`로 종료한다. `--device-index`,
+`--servo-channel`, `--pca9685-address`, `--crop-scale`은 이어서 실행할
+`rx_dynamic_tracking.py`와 같은 값을 사용해야 한다.
+
+카메라 화면 없이 Rx 짐벌만 0도로 맞추려면 `--live-stream`을 생략한다.
+PWM을 끈 뒤에는 서보 유지 토크가 사라지므로 중앙 정렬 후 짐벌이 물리적으로
+움직이지 않도록 주의한다. Tx에는 카메라가 없고 GPIO 짐벌을 사용하므로 이
+PCA9685 준비 스크립트는 Rx에서만 실행한다.
 
 ## 공통 동작 원칙
 
@@ -18,11 +50,49 @@
 Rx와 Tx에서 각각 `chronyc waitsync`로 로컬 시계의 동기 상태를 확인한 다음,
 동일한 `--start-utc`와 `--experiment-id`를 사용한다.
 
-`--start-utc`는 Unix epoch seconds 형식의 미래 UTC 시각이다. Rx는 하드웨어
-초기화와 카메라 안정화에 기본 5초가 필요하므로 두 프로그램을 실행하고도
-충분히 시간이 남도록 보통 15~30초 뒤의 시각을 지정한다.
+`--start-utc`는 Unix epoch seconds 형식의 **실험 시작 예정 시각**이다.
+1970-01-01 00:00:00 UTC부터 해당 시각까지 흐른 초를 뜻하며, 장치나
+프로그램이 자동으로 정해 주는 값이 아니다. 사용자가 미래 시각을 하나
+만들어 Rx와 Tx에 같은 값을 입력해야 한다. Rx는 하드웨어 초기화와 카메라
+안정화에 기본 5초가 필요하므로 두 프로그램을 실행하고도 충분히 시간이
+남도록 보통 15~30초 뒤의 시각을 지정한다.
 
-예를 들어 두 장치에서 다음 두 값을 똑같이 사용한다.
+Linux에서 현재 시각의 30초 뒤를 시작시각으로 만드는 예:
+
+```bash
+date -u -d '30 seconds' +%s
+```
+
+예를 들어 위 명령이 `1785069000`을 출력했다면 `--start-utc 1785069000`으로
+입력한다. 60초 뒤에 시작하고 싶으면 `30`을 `60`으로 바꾼다.
+
+```bash
+date -u -d '60 seconds' +%s
+```
+
+`+%s`는 사람이 읽는 날짜를 Unix epoch seconds 정수로 출력하라는 의미다.
+반대로 `@`를 붙인 다음 명령은 epoch seconds가 실제로 어떤 UTC 날짜와
+시각인지 확인할 때만 사용한다. 실험 실행에 필수인 명령은 아니다.
+
+```bash
+date -u -d @1785069000 '+%Y-%m-%d %H:%M:%S UTC'
+```
+
+위 명령은 다음처럼 사람이 읽을 수 있는 UTC 시각을 출력한다. 여기서 `@`는
+뒤의 숫자를 Unix epoch seconds로 해석하라는 뜻이다.
+
+```text
+2026-07-26 12:30:00 UTC
+```
+
+정리하면 다음 순서로 사용한다.
+
+1. 한 장치에서 `date -u -d '30 seconds' +%s`를 한 번 실행한다.
+2. 출력된 숫자를 복사한다.
+3. 그 숫자를 Rx와 Tx 양쪽의 `--start-utc`에 동일하게 입력한다.
+
+예를 들어 두 장치에서 다음 두 값을 똑같이 사용한다. 아래 값은 형식을
+보여주기 위한 예시이므로 실제 실행할 때는 위 명령으로 새 미래 시각을 만든다.
 
 ```text
 experiment-id: dynamic_20260726_01
@@ -45,15 +115,30 @@ sample 2: start + 0.4초
 Python, 운영체제 및 하드웨어는 실시간 시스템이 아니므로 실제 명령 지연은
 `command_elapsed_s - scheduled_elapsed_s`로 분석한다.
 
-### 최신 UWB 패킷 한 개
+### 최신 UWB 패킷 재사용
 
 수신 스레드는 유효한 UWB 패킷 중 최신 한 개만 크기 1의 큐에 유지한다.
 더 새로운 패킷이 들어오면 아직 처리하지 않은 이전 패킷을 버린다.
 
-각 0.2초 정렬 시점에는 그때까지 도착한 최신 미처리 패킷 하나만 꺼낸다.
-한 번 사용한 패킷은 다시 사용하지 않는다. 공유 시작시각 이전에 받은 패킷도
-사용하지 않는다. 해당 정렬 시점에 새 패킷이 없으면 짐벌 명령을 만들지 않고
-`status=uwb_unavailable`을 기록한다.
+기본 `rx_dynamic_tracking.py`와 `tx_dynamic_tracking.py`는 각 0.2초 정렬
+시점에 새 패킷이 있으면 그중 최신 패킷을 사용한다. 새 패킷이 없으면 실험
+시작 후 마지막으로 사용한 유효 패킷을 다시 사용한다. 따라서 첫 유효 패킷을
+받은 뒤에는 UWB 송신 주기와 정렬 주기가 어긋나도 마지막 방위각으로 계속
+보정한다. 공유 시작시각 이전에 받은 패킷은 캐시하거나 재사용하지 않는다.
+아직 실험 시작 후 유효 패킷을 한 번도 받지 못한 경우에만 짐벌 명령을 만들지
+않고 `status=uwb_unavailable`을 기록한다.
+
+재사용 시간 제한은 없다. UWB 송신이 중단되어도 마지막 패킷을 매 0.2초마다
+계속 적용하므로 필요하면 `Ctrl+C`로 실험을 중단해야 한다.
+
+CSV의 `uwb_packet_reused`는 새 패킷이면 `0`, 이전 패킷을 다시 쓴
+정렬이면 `1`이다.
+
+UWB 방위각은 상대 오차각이므로 재사용 시 같은 오차가 이전 짐벌 명령각에
+반복해서 더해질 수 있다. 실험 결과를 분석할 때는
+`uwb_packet_reused`, `uwb_received_monotonic_ns`, `servo_clipped`를 함께
+확인한다. 패킷을 재사용하지 않는 기존 동작은 아래의 별도 보존 버전으로
+실행할 수 있다.
 
 유효 패킷 형식:
 
@@ -86,6 +171,29 @@ UWB ROS 상대각 = -UWB 원시 상대각
 
 ## Rx 실행
 
+### 필수 옵션
+
+Rx 실행 시 아래 세 옵션은 반드시 입력해야 한다. 나머지 옵션은 기본값이
+있으며 장치 구성과 실험 조건에 맞을 때만 변경한다.
+
+| 옵션 | 입력할 값 |
+|---|---|
+| `--experiment-id` | 이번 실험을 구분할 ID. Rx와 Tx에 같은 값 입력 |
+| `--start-utc` | 위 방법으로 만든 미래 Unix epoch seconds. Rx와 Tx에 같은 값 입력 |
+| `--distance` | `1`, `2`, `3`: 해당 m의 고정 반경 호, `0`: 랜덤 이동 |
+
+최소 실행 명령:
+
+```bash
+python code/experiment/dynamic_tracking/rx_dynamic_tracking.py \
+  --experiment-id dynamic_20260726_01 \
+  --start-utc 1785069000 \
+  --distance 2
+```
+
+카메라 번호, 서보 채널 및 PCA9685 주소가 기본값과 다르면 해당 옵션도
+실제 실행에 맞게 지정해야 한다.
+
 ```bash
 python code/experiment/dynamic_tracking/rx_dynamic_tracking.py \
   --experiment-id dynamic_20260726_01 \
@@ -105,7 +213,8 @@ python code/experiment/dynamic_tracking/rx_dynamic_tracking.py \
    화이트 밸런스를 안정화한다.
 4. UWB 최신값 수신 스레드와 결과 저장 스레드를 시작한다.
 5. `--start-utc`까지 기다린다.
-6. 매 0.2초 절대 예정 시각에 최신 미처리 UWB 패킷 하나로 정렬한다.
+6. 매 0.2초 절대 예정 시각에 최신 UWB 패킷으로 정렬하고, 새 패킷이 없으면
+   마지막 패킷을 재사용한다.
 7. 정렬 직전 프레임 ID와 정렬 명령 시각을 기준으로, 다음 정렬 절대
    예정 시각까지만 새 카메라 프레임의 지정 색상을 검사한다.
 8. 결과 CSV와 실패 이미지는 다음 정렬을 지연시키지 않도록 별도 저장
@@ -120,7 +229,7 @@ Rx 색상 결과:
 | 새 프레임에서 지정 색상 검출 | 1 | 1 | `success` |
 | 새 프레임에서 지정 색상 미검출 | 0 | 0 | `color_not_detected` |
 | 다음 정렬까지 새 프레임 없음 | 빈 값 | 0 | `camera_frame_timeout` |
-| 정렬 시점에 새 UWB 패킷 없음 | 빈 값 | 0 | `uwb_unavailable` |
+| 실험 시작 후 유효 UWB를 아직 받지 못함 | 빈 값 | 0 | `uwb_unavailable` |
 | 처리 예외 | 판정 상태에 따라 다름 | 0 | `error` |
 
 실패 프레임 저장은 기본으로 켜져 있다. `color_not_detected`와
@@ -151,6 +260,28 @@ Rx 색상 결과:
 
 ## Tx 실행
 
+### 필수 옵션
+
+Tx 실행 시에도 아래 세 옵션을 반드시 입력해야 한다. 나머지 옵션은 기본값이
+있다.
+
+| 옵션 | 입력할 값 |
+|---|---|
+| `--experiment-id` | 이번 실험을 구분할 ID. Rx와 Tx에 같은 값 입력 |
+| `--start-utc` | 위 방법으로 만든 미래 Unix epoch seconds. Rx와 Tx에 같은 값 입력 |
+| `--distance` | `1`, `2`, `3`: 해당 m의 고정 반경 호, `0`: 랜덤 이동 |
+
+최소 실행 명령:
+
+```bash
+python code/experiment/dynamic_tracking/tx_dynamic_tracking.py \
+  --experiment-id dynamic_20260726_01 \
+  --start-utc 1785069000 \
+  --distance 2
+```
+
+사용할 BCM GPIO 핀이 기본값 18번과 다르면 `--yaw-pin`도 지정해야 한다.
+
 ```bash
 python code/experiment/dynamic_tracking/tx_dynamic_tracking.py \
   --experiment-id dynamic_20260726_01 \
@@ -165,7 +296,8 @@ python code/experiment/dynamic_tracking/tx_dynamic_tracking.py \
 2. Raspberry Pi GPIO 50Hz PWM 짐벌을 초기화하고 `--initial-deg`로 이동한다.
 3. UWB 최신값 수신 스레드를 시작한다.
 4. `--start-utc`까지 기다린다.
-5. 매 0.2초 절대 예정 시각에 최신 미처리 UWB 패킷 하나로 짐벌을 정렬한다.
+5. 매 0.2초 절대 예정 시각에 최신 UWB 패킷으로 정렬하고, 새 패킷이 없으면
+   마지막 패킷을 재사용한다.
 6. 성공 또는 `uwb_unavailable` 결과를 정렬 주기를 막지 않는 별도 저장
    스레드에서 CSV에 기록한다.
 7. `Ctrl+C`를 누르면 짐벌을 0도로 복귀시키고 PWM과 GPIO를 정리한다.
@@ -184,6 +316,34 @@ Tx에는 카메라와 색상 인식이 없다.
 | `--initial-deg` | 0 | 시작 ROS 짐벌각 |
 | `--chrony-max-correction-sec` | 0.005초 | 허용할 Chrony 잔여 보정 |
 | `--chrony-wait-tries` | 60 | 1초 간격 Chrony 확인 최대 횟수 |
+
+## 패킷을 재사용하지 않는 보존 버전
+
+기존 방식처럼 각 UWB 패킷을 한 번만 사용하려면 파일명에
+`no_packet_reuse`가 붙은 Rx와 Tx를 실행한다. 두 장치에서 반드시 같은
+버전을 사용해야 한다.
+
+Rx:
+
+```bash
+python code/experiment/dynamic_tracking/rx_dynamic_tracking_no_packet_reuse.py \
+  --experiment-id dynamic_no_reuse_20260726_01 \
+  --start-utc 1785069000 \
+  --distance 2
+```
+
+Tx:
+
+```bash
+python code/experiment/dynamic_tracking/tx_dynamic_tracking_no_packet_reuse.py \
+  --experiment-id dynamic_no_reuse_20260726_01 \
+  --start-utc 1785069000 \
+  --distance 2
+```
+
+이 버전은 정렬 시점에 새 미처리 패킷이 없으면 짐벌 명령을 만들지 않고
+`status=uwb_unavailable`을 기록한다. 결과는 기본 재사용 버전과 섞이지 않게
+`result/dynamic_tracking_no_packet_reuse/<experiment-id>/`에 저장한다.
 
 ## 결과 위치
 
@@ -215,6 +375,7 @@ result/dynamic_tracking/
 | `previous_gimbal_ros_deg` | 정렬 직전의 이전 짐벌 명령각, ROS 좌표계 |
 | `uwb_source` | UWB UDP 송신 주소 |
 | `uwb_received_monotonic_ns` | 로컬에서 UWB 패킷을 받은 monotonic 시각 |
+| `uwb_packet_reused` | 새 패킷 사용은 `0`, 이전 패킷 재사용은 `1` |
 | `uwb_raw_azimuth_deg` | UWB 원시 CW 상대 방위각 |
 | `uwb_ros_azimuth_deg` | ROS CCW로 부호 변환한 UWB 상대각 |
 | `correction_ros_deg` | deadband와 회당 60도 제한을 적용한 ROS 보정각 |
@@ -225,8 +386,10 @@ result/dynamic_tracking/
 | `started_at`, `finished_at` | 해당 주기 처리 시작 및 종료 지역 시각 |
 | `error_message` | 예외 진단 메시지 |
 
-UWB가 없는 주기도 CSV에 한 행을 남긴다. 따라서 Rx와 Tx의
-`sample_index`와 `scheduled_elapsed_s`를 기준으로 시간축을 비교할 수 있다.
+사용할 수 있는 UWB가 없는 주기도 CSV에 한 행을 남긴다. 기본 재사용 버전은
+첫 유효 패킷을 받기 전, 비재사용 보존 버전은 새 미처리 패킷이 없는 주기가
+이에 해당한다. 따라서 Rx와 Tx의 `sample_index`와 `scheduled_elapsed_s`를
+기준으로 시간축을 비교할 수 있다.
 
 ## Rx 전용 CSV 필드
 

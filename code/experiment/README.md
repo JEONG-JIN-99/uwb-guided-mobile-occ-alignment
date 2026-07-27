@@ -4,6 +4,34 @@
 방위각으로 송신기 방향을 계산하고, 정렬 명령 시점부터 제한시간 안에 선택한
 색상이 인식되는지 측정하는 하드웨어 실험 코드다. QR은 사용하지 않는다.
 
+## 실험 전 짐벌·카메라 중앙 정렬
+
+정적 정렬 실험을 시작하기 전에 다음 준비 스크립트를 실행한다.
+처음 실행하는 장치에서는 프로젝트 의존성을 먼저 설치해야 한다.
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+```bash
+python code/experiment/static_alignment/dir_init.py \
+  --device-index 4 \
+  --servo-channel 0 \
+  --pca9685-address 0x40 \
+  --crop-scale 1.0 \
+  --live-stream
+```
+
+스크립트는 짐벌을 ROS yaw 0도로 이동해 3초간 안정화한 뒤 PWM 신호를 끄고,
+카메라 화면 중앙에 빨간 십자선을 표시한다. 십자선을 기준으로 카메라와 실험
+표식의 중앙을 맞춘 다음 `q` 또는 `Esc`로 종료한다. `--device-index`,
+`--servo-channel`, `--pca9685-address`, `--crop-scale`은 이어서 실행할
+`static_alignment_test.py`와 같은 값을 사용해야 한다.
+
+카메라 화면 없이 짐벌만 0도로 맞추려면 `--live-stream`을 생략한다. PWM을
+끈 뒤에는 서보 유지 토크가 사라지므로 중앙 정렬 후 짐벌이 물리적으로
+움직이지 않도록 주의한다.
+
 ## 동작 순서
 
 각 시도는 다음 순서로 진행된다.
