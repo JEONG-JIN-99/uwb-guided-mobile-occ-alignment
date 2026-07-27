@@ -131,7 +131,7 @@ class DynamicTrackingTests(unittest.TestCase):
         validate_rx_args(parser, args)
         self.assertEqual(ALIGNMENT_PERIOD_SEC, 0.2)
         self.assertEqual(args.camera_warmup, 5.0)
-        self.assertEqual(args.crop_scale, 1.0)
+        self.assertEqual(args.crop_scale, 0.3)
         self.assertEqual(args.target_color, "red")
         self.assertIn("color_visible", RX_FIELDS)
         self.assertIn("camera_frame_id", RX_FIELDS)

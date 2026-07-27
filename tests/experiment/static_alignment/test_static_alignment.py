@@ -54,7 +54,7 @@ class StaticAlignmentTests(unittest.TestCase):
         args = parser.parse_args(["--distance", "2"])
         validate_args(parser, args)
 
-        self.assertEqual(args.crop_scale, 1.0)
+        self.assertEqual(args.crop_scale, 0.3)
         self.assertEqual(args.interval, 0.2)
         self.assertEqual(args.camera_warmup, 5.0)
         self.assertEqual(args.zero_settle_time, 1.0)

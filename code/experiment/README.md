@@ -18,7 +18,7 @@ python code/experiment/static_alignment/dir_init.py \
   --device-index 4 \
   --servo-channel 0 \
   --pca9685-address 0x40 \
-  --crop-scale 1.0 \
+  --crop-scale 0.3 \
   --live-stream
 ```
 
@@ -82,7 +82,7 @@ python code/experiment/static_alignment_test.py --distance 2
 | 0도 복귀 안정화 | `--zero-settle-time` | 1초 |
 | 초기각 이동 안정화 | `--initial-settle-time` | 1초 |
 | 정렬 명령 후 전체 안정화 | `--alignment-settle-time` | 1초 |
-| 영상 크롭 비율 | `--crop-scale` | 1.0 |
+| 영상 크롭 비율 | `--crop-scale` | 0.3 |
 | 인식 색상 | `--target-color` | red |
 | PCA9685 주소 | `--pca9685-address` | `0x40` |
 | 서보 채널 | `--servo-channel` | 0 |
@@ -177,7 +177,7 @@ python code/experiment/static_alignment_test.py \
   --distance 2 \
   --attempts 100 \
   --device-index 4 \
-  --crop-scale 1 \
+  --crop-scale 0.3 \
   --camera-warmup 5 \
   --initial-min -50 \
   --initial-max 50 \

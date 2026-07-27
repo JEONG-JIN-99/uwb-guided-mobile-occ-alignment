@@ -127,8 +127,8 @@ def build_parser():
     parser.add_argument(
         "--crop-scale",
         type=float,
-        default=1.0,
-        help="centered camera crop ratio (default: 1.0, no crop)",
+        default=0.3,
+        help="centered camera crop ratio (default: 0.3)",
     )
     parser.add_argument(
         "--distance",

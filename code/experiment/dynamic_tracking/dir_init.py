@@ -31,10 +31,10 @@ def build_parser():
     parser.add_argument(
         "--crop-scale",
         type=float,
-        default=1.0,
+        default=0.3,
         help=(
             "centered display crop ratio; use the same value as the experiment "
-            "(default: 1.0)"
+            "(default: 0.3)"
         ),
     )
     parser.add_argument(

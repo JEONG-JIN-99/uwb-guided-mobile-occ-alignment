@@ -98,7 +98,7 @@ def build_parser():
         metavar="EPOCH_SEC",
     )
     parser.add_argument("--device-index", type=int, default=4)
-    parser.add_argument("--crop-scale", type=float, default=1.0)
+    parser.add_argument("--crop-scale", type=float, default=0.3)
     parser.add_argument(
         "--camera-warmup",
         type=float,

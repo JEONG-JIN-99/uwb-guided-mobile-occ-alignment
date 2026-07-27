@@ -28,7 +28,7 @@ python code/experiment/dynamic_tracking/dir_init.py \
   --device-index 4 \
   --servo-channel 0 \
   --pca9685-address 0x40 \
-  --crop-scale 1.0 \
+  --crop-scale 0.3 \
   --live-stream
 ```
 
@@ -248,7 +248,7 @@ Rx 색상 결과:
 | `--pca9685-address` | `0x40` | PCA9685 I2C 주소 |
 | `--initial-deg` | 0 | 시작 ROS 짐벌각 |
 | `--device-index` | 4 | 카메라 `/dev/videoX` 번호 |
-| `--crop-scale` | 1.0 | 중앙 영상 사용 비율, 1.0은 크롭 없음 |
+| `--crop-scale` | 0.3 | 중앙 영상 사용 비율, 기본은 중앙 30% |
 | `--camera-warmup` | 5초 | 시작 전 카메라 색상 안정화 시간 |
 | `--target-color` | `red` | 찾을 색상 |
 | `--color-min-area` | 500 | 최소 전체 색상 마스크 픽셀 |
