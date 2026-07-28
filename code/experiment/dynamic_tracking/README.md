@@ -14,17 +14,21 @@
 두 프로그램 모두 사용자가 `Ctrl+C`를 누를 때까지 계속 실행한다. 현재 종료
 시각이나 샘플 수에 의한 자동 종료 조건은 없다.
 
-## 실험 전 Rx 짐벌·카메라 중앙 정렬
+## 실험 전 Rx·Tx 짐벌 초기 정렬
 
-동적 추적을 시작하기 전에 카메라가 연결된 Rx 장치에서 다음 준비 스크립트를
-실행한다. 처음 실행하는 장치에서는 프로젝트 의존성을 먼저 설치해야 한다.
+동적 추적을 시작하기 전에 Rx와 Tx 장치에서 각각 준비 스크립트를 실행한다.
+처음 실행하는 장치에서는 프로젝트 의존성을 먼저 설치해야 한다.
 
 ```bash
 python -m pip install -r requirements.txt
 ```
 
+### Rx: PCA9685 짐벌·카메라 중앙 정렬
+
+카메라와 PCA9685 서보 드라이버가 연결된 Rx 장치에서 실행한다.
+
 ```bash
-python code/experiment/dynamic_tracking/dir_init.py \
+python code/experiment/dynamic_tracking/rx_dir_init.py \
   --device-index 4 \
   --servo-channel 0 \
   --pca9685-address 0x40 \
@@ -42,6 +46,21 @@ python code/experiment/dynamic_tracking/dir_init.py \
 PWM을 끈 뒤에는 서보 유지 토크가 사라지므로 중앙 정렬 후 짐벌이 물리적으로
 움직이지 않도록 주의한다. Tx에는 카메라가 없고 GPIO 짐벌을 사용하므로 이
 PCA9685 준비 스크립트는 Rx에서만 실행한다.
+
+### Tx: GPIO 짐벌 0도 정렬
+
+Tx에는 카메라와 PCA9685 서보 드라이버가 없으므로, BCM GPIO에 직접 연결된
+서보만 다음 명령으로 0도에 맞춘다.
+
+```bash
+python code/experiment/dynamic_tracking/tx_dir_init.py \
+  --yaw-pin 18
+```
+
+스크립트는 Tx 짐벌을 ROS yaw 0도로 이동해 3초간 안정화한 뒤 PWM을 끄고
+GPIO 자원을 정리한다. `--yaw-pin`은 이어서 실행할
+`tx_dynamic_tracking.py`와 같은 값을 사용해야 한다. 안정화 시간을 바꾸려면
+`--stabilization-time`을 지정한다.
 
 ## 공통 동작 원칙
 
