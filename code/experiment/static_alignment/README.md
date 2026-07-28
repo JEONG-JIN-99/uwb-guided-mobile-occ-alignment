@@ -388,6 +388,37 @@ alignment_error_plot.png      # 시도별 부호 오차와 절대 오차 분포
 그 값의 절댓값이다. 이는 엔코더나 영상 기반으로 측정한 실제 기계 각도가
 아니므로 UWB 측정, 좌표 변환 및 명령 계산을 포함한 소프트웨어 오차 지표다.
 
+### 1m·2m·3m 비교 그림
+
+현재 논문용 1m·2m·3m 결과의 안정화 유무를 비교하는 세 그림은 다음
+명령으로 재생성한다.
+
+```bash
+python code/experiment/static_alignment/plot_alignment_accuracy.py
+```
+
+정렬오차는 이상적인 목표 0도와 실제 짐벌 명령각 차이의 절댓값으로
+계산한다.
+
+```text
+absolute residual command error
+    = abs(gimbal_command_ros_deg - 0도)
+```
+
+생성되는 그림은 다음과 같다.
+
+```text
+docs/paper/figures/alignment_accuracy_initial_angle_scatter.png
+docs/paper/figures/alignment_accuracy_initial_angle_mean.png
+docs/paper/figures/alignment_accuracy_distance_violin.png
+```
+
+산점도와 초기각 구간별 평균오차 그래프는 거리를 1m·2m·3m 패널로
+분리한다. 평균오차 그래프의 점은 산술평균이고 오차막대는 근사 95%
+신뢰구간이다. 거리별 바이올린 플롯의 흰 테두리 점도 각 분포의 평균
+절대오차(MAE)를 나타낸다. 모든 그림에서 안정화 없음과 0.5초 안정화
+결과를 서로 다른 색으로 표시하며 합치지 않는다.
+
 ## 전체 옵션 예시
 
 ```bash
