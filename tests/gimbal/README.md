@@ -32,6 +32,28 @@ PCA9685 채널, I²C 주소와 각 위치의 대기 시간을 변경할 수 있�
 python tests/gimbal/gimbal_range_test.py --servo-channel 0 --pca9685-address 0x40 --wait 5
 ```
 
+## `tx_gpio_gimbal_range_test.py`
+
+PCA9685 서보 드라이버가 없는 Tx에서 BCM GPIO의 50Hz PWM으로 yaw 서보를
+직접 구동합니다. ROS yaw 좌표계를 기준으로 아래 순서로 움직입니다.
+
+```text
+-90도 -> +90도 -> 0도
+```
+
+기본 신호 핀은 BCM GPIO 18이며 각 위치에서 3초 동안 대기합니다. 정상
+종료뿐 아니라 `Ctrl+C`로 중단해도 0도로 복귀한 뒤 GPIO 자원을 정리합니다.
+
+```bash
+python tests/gimbal/tx_gpio_gimbal_range_test.py
+```
+
+GPIO 핀과 대기 시간은 옵션으로 변경할 수 있습니다.
+
+```bash
+python tests/gimbal/tx_gpio_gimbal_range_test.py --yaw-pin 18 --wait 5
+```
+
 ## `gimbal_uwb_tracking_test.py`
 
 QR 인식 없이 UWB UDP 패킷만 사용해 yaw 짐벌을 구동하는 빠른 추적
