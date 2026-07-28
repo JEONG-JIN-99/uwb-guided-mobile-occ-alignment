@@ -199,10 +199,6 @@ UWB 패킷 형식은 `1,distance,azimuth,elevation`이다.
 python code/experiment/static_alignment/static_alignment_test.py --distance 2
 ```
 
-이전 경로인 `code/experiment/static_alignment_test.py`는 기존 명령과의
-호환을 위해 새 본 실험 코드를 호출하는 진입점으로만 남아 있다. 새 실행
-명령과 import에는 `static_alignment/` 폴더 안의 파일을 사용한다.
-
 `--distance 0`이나 음수는 허용되지 않는다. 이 값은 UWB 패킷 안의 측정
 거리와 별개로, 실험 조건을 CSV에 기록하기 위해 사용자가 직접 입력하는
 거리다.
