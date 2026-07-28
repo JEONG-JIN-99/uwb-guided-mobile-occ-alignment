@@ -231,6 +231,53 @@ CSV에는 UWB 원시·ROS 상대각, 적용 보정각, 이전 및 새 짐벌 명
 `--no-save-failure-frames`를 사용합니다. `color_visible`은 표식의 화면 진입 성공 여부로,
 `color_center_distance_px`는 동적 정렬 오차 지표로 사용할 수 있습니다.
 
+## `rx_dynamic_tracking_test.py`
+
+실제 Rx 동적 실험을 시작하기 전에 짐벌의 UWB 추적, 빨간색 인식과 CSV
+기록값을 현장에서 확인하는 테스트입니다. 본 실험과 달리 Chrony 상태나 UTC
+공유 시작시각을 요구하지 않고 실행 즉시 시작하며, `Ctrl+C`를 누를 때까지
+0.2초 주기로 계속 동작합니다.
+
+```bash
+python tests/gimbal/rx_dynamic_tracking_test.py
+```
+
+기본값은 UDP `0.0.0.0:5005`, PCA9685 채널 0, 카메라 `/dev/video4`, 중앙
+60% crop, 빨간색 인식입니다. 카메라 화면을 함께 보려면 다음과 같이
+실행합니다.
+
+```bash
+python tests/gimbal/rx_dynamic_tracking_test.py --live-stream
+```
+
+본 실험의 Rx와 같은 CSV 필드를 기록하고 색상 인식 실패 프레임도 기본으로
+저장합니다.
+
+```text
+result/gimbal_rx_dynamic_tracking_test/run_YYYYMMDD_HHMMSS/rx.csv
+result/gimbal_rx_dynamic_tracking_test/run_YYYYMMDD_HHMMSS/failed_frames/
+```
+
+주요 하드웨어 및 인식 옵션:
+
+```bash
+python tests/gimbal/rx_dynamic_tracking_test.py \
+  --host 0.0.0.0 \
+  --port 5005 \
+  --servo-channel 0 \
+  --pca9685-address 0x40 \
+  --device-index 4 \
+  --crop-scale 0.6 \
+  --target-color red \
+  --color-min-area 125 \
+  --color-min-component-area 50 \
+  --live-stream
+```
+
+실패 이미지가 필요 없으면 `--no-save-failure-frames`를 사용합니다. 종료 시
+남은 비동기 기록을 완료한 뒤 짐벌을 ROS yaw 0도로 복귀시키고 카메라,
+UWB 소켓 및 PCA9685 자원을 정리합니다.
+
 ## `send_fake_uwb_sweep.py`
 
 가짜 UWB 상대각 패킷을 `gimbal_uwb_tracking_test.py`로 보내는 테스트 송신 코드입니다.
