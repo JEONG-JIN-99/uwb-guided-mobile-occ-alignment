@@ -79,7 +79,7 @@ Rx와 Tx에서 각각 `chronyc waitsync`로 로컬 시계의 동기 상태를 �
 Linux에서 현재 시각의 30초 뒤를 시작시각으로 만드는 예:
 
 ```bash
-date -u -d '30 seconds' +%s
+date -u -d '120 seconds' +%s
 ```
 
 예를 들어 위 명령이 `1785069000`을 출력했다면 `--start-utc 1785069000`으로
@@ -168,18 +168,37 @@ UWB 방위각은 상대 오차각이므로 재사용 시 같은 오차가 이전
 `header=1`, 유한한 숫자, 음수가 아닌 거리, `-180 <= azimuth < 180`을
 만족해야 한다.
 
+### 시작 전 UWB 영점 편향 보정
+
+Rx와 Tx는 기본적으로 UWB 수신을 시작한 뒤 서로 정면을 바라보고 정지한
+상태에서 각각 새 유효 패킷 100개를 수집한다. 동적 추적용 최신값 큐는 계속
+크기 1로 유지하며, 동일한 수신 스레드가 캘리브레이션 중에만 별도 누적기에
+각 패킷을 한 번씩 전달한다.
+
+각도 `-180도`와 `180도`의 연결을 올바르게 처리하기 위해 일반 산술평균이
+아닌 원형 평균으로 각 장치의 편향을 계산한다. 원형 표준편차가 기본 5도를
+초과하거나 편향의 절댓값이 기본 20도를 초과하면 잘못된 배치나 불안정한
+측정으로 판단해 실험을 시작하지 않는다. 100개를 공유 시작시각 1초 전까지
+모으지 못한 경우에도 일부 평균을 적용하지 않고 종료한다.
+
+패킷 주기에 따라 100개 수집 시간이 달라지므로 `--start-utc`에는 카메라
+워밍업과 캘리브레이션이 모두 끝날 수 있는 충분한 시간을 둬야 한다. 비교
+실험에서 보정을 명시적으로 끄려면 `--no-uwb-calibration`을 사용한다.
+
 ### 동적 각도 계산
 
 UWB 원시 방위각은 CW 양수, 짐벌 로그와 명령은 ROS CCW 양수다.
 
 ```text
-UWB ROS 상대각 = -UWB 원시 상대각
+보정 UWB 원시 상대각 = normalize(UWB 원시 상대각 - UWB 편향)
+UWB ROS 상대각 = -보정 UWB 원시 상대각
 계산 목표각 = 이전 짐벌 ROS 명령각 + UWB ROS 상대각
 ```
 
-0.2초 동안 서보가 이동할 수 있는 범위를 고려해 한 번의 실제 보정은 최대
-60도로 제한한다. 1도 미만은 deadband로 처리한다. 그다음 실제 명령을 서보
-가동 범위 `-90~90도`로 제한한다.
+편향은 UWB 원시 좌표계에서 먼저 제거하며 원본 값은 로그에 보존한다.
+0.2초 동안 서보가 이동할 수 있는 범위를 고려해 보정된 원시 상대각에
+1도 deadband와 한 번당 최대 60도 제한을 적용한다. 그다음 실제 명령을
+서보 가동 범위 `-90~90도`로 제한한다.
 
 - `target_calculated_ros_deg`: deadband, 60도 주기 제한 및 서보 범위를
   적용하기 전 논리적 목표각
@@ -231,14 +250,15 @@ python code/experiment/dynamic_tracking/rx_dynamic_tracking.py \
 3. 카메라 수신 스레드를 시작하고 `--camera-warmup` 5초 동안 자동 노출과
    화이트 밸런스를 안정화한다.
 4. UWB 최신값 수신 스레드와 결과 저장 스레드를 시작한다.
-5. `--start-utc`까지 기다린다.
-6. 매 0.2초 절대 예정 시각에 최신 UWB 패킷으로 정렬하고, 새 패킷이 없으면
+5. 정면 정지 상태의 UWB 패킷 100개로 Rx 영점 편향을 계산하고 검사한다.
+6. `--start-utc`까지 기다린다.
+7. 매 0.2초 절대 예정 시각에 최신 UWB 패킷으로 정렬하고, 새 패킷이 없으면
    마지막 패킷을 재사용한다.
-7. 정렬 직전 프레임 ID와 정렬 명령 시각을 기준으로, 다음 정렬 절대
+8. 정렬 직전 프레임 ID와 정렬 명령 시각을 기준으로, 다음 정렬 절대
    예정 시각까지만 새 카메라 프레임의 지정 색상을 검사한다.
-8. 결과 CSV와 실패 이미지는 다음 정렬을 지연시키지 않도록 별도 저장
+9. 결과 CSV와 실패 이미지는 다음 정렬을 지연시키지 않도록 별도 저장
    스레드에 전달한다.
-9. `Ctrl+C`를 누르면 큐에 남은 결과를 저장하고 카메라, UWB 소켓 및 짐벌을
+10. `Ctrl+C`를 누르면 큐에 남은 결과를 저장하고 카메라, UWB 소켓 및 짐벌을
    정리한다.
 
 Rx 색상 결과:
@@ -267,6 +287,11 @@ Rx 색상 결과:
 | `--pca9685-address` | `0x40` | PCA9685 I2C 주소 |
 | `--initial-deg` | 0 | 시작 ROS 짐벌각 |
 | `--device-index` | 4 | 카메라 `/dev/videoX` 번호 |
+| `--uwb-calibration` | 켜짐 | 시작 전 UWB 영점 편향 보정 |
+| `--uwb-calibration-samples` | 100 | 편향 계산에 사용할 새 패킷 수 |
+| `--uwb-calibration-max-std-deg` | 5도 | 허용할 최대 원형 표준편차 |
+| `--uwb-calibration-max-bias-deg` | 20도 | 허용할 편향 절댓값 |
+| `--uwb-calibration-margin-sec` | 1초 | 공유 시작 전 완료 여유시간 |
 | `--crop-scale` | 0.6 | 중앙 영상 사용 비율, 기본은 중앙 60% |
 | `--camera-warmup` | 5초 | 시작 전 카메라 색상 안정화 시간 |
 | `--target-color` | `red` | 찾을 색상 |
@@ -313,15 +338,21 @@ python code/experiment/dynamic_tracking/tx_dynamic_tracking.py \
 
 1. Chrony 동기 상태를 확인한다.
 2. Raspberry Pi GPIO 50Hz PWM 짐벌을 초기화하고 `--initial-deg`로 이동한다.
-3. UWB 최신값 수신 스레드를 시작한다.
-4. `--start-utc`까지 기다린다.
-5. 매 0.2초 절대 예정 시각에 최신 UWB 패킷으로 정렬하고, 새 패킷이 없으면
+3. 기본 1초 동안 초기각을 유지해 안정화한 뒤 PWM 제어 신호를 끈다.
+4. UWB 최신값 수신 스레드를 시작한다.
+5. 정면 정지 상태의 UWB 패킷 100개로 Tx 영점 편향을 계산하고 검사한다.
+6. PWM을 끈 상태로 `--start-utc`까지 기다린다.
+7. 공유 시작 후 첫 유효 UWB 명령에서 PWM을 다시 출력하고, 이후 매 0.2초
+   절대 예정 시각에 최신 UWB 패킷으로 정렬한다. 새 패킷이 없으면
    마지막 패킷을 재사용한다.
-6. 성공 또는 `uwb_unavailable` 결과를 정렬 주기를 막지 않는 별도 저장
+8. 성공 또는 `uwb_unavailable` 결과를 정렬 주기를 막지 않는 별도 저장
    스레드에서 CSV에 기록한다.
-7. `Ctrl+C`를 누르면 짐벌을 0도로 복귀시키고 PWM과 GPIO를 정리한다.
+9. `Ctrl+C`를 누르면 짐벌을 0도로 복귀시키고 PWM과 GPIO를 정리한다.
 
-Tx에는 카메라와 색상 인식이 없다.
+시작 전 PWM을 끄면 소프트웨어 PWM 지터는 줄지만 서보 유지 토크도 사라진다.
+외력이나 안테나 무게로 짐벌이 움직이는 환경에서는 이 기능 대신 하드웨어
+타이밍 PWM 또는 별도 서보 드라이버를 사용해야 한다. Tx에는 카메라와 색상
+인식이 없다.
 
 ### Tx 옵션
 
@@ -333,6 +364,12 @@ Tx에는 카메라와 색상 인식이 없다.
 | `--host`, `--port` | `0.0.0.0`, `5005` | UWB UDP 수신 주소 |
 | `--yaw-pin` | 18 | 직접 PWM을 출력할 BCM GPIO 핀 |
 | `--initial-deg` | 0 | 시작 ROS 짐벌각 |
+| `--prestart-gimbal-stabilization-sec` | 1초 | 초기각 유지 후 시작 전 PWM을 끄기까지의 안정화 시간 |
+| `--uwb-calibration` | 켜짐 | 시작 전 UWB 영점 편향 보정 |
+| `--uwb-calibration-samples` | 100 | 편향 계산에 사용할 새 패킷 수 |
+| `--uwb-calibration-max-std-deg` | 5도 | 허용할 최대 원형 표준편차 |
+| `--uwb-calibration-max-bias-deg` | 20도 | 허용할 편향 절댓값 |
+| `--uwb-calibration-margin-sec` | 1초 | 공유 시작 전 완료 여유시간 |
 | `--chrony-max-correction-sec` | 0.005초 | 허용할 Chrony 잔여 보정 |
 | `--chrony-wait-tries` | 60 | 1초 간격 Chrony 확인 최대 횟수 |
 
@@ -395,8 +432,12 @@ result/dynamic_tracking/
 | `uwb_source` | UWB UDP 송신 주소 |
 | `uwb_received_monotonic_ns` | 로컬에서 UWB 패킷을 받은 monotonic 시각 |
 | `uwb_packet_reused` | 새 패킷 사용은 `0`, 이전 패킷 재사용은 `1` |
+| `uwb_calibration_sample_count` | 편향 계산에 사용한 패킷 수. 보정 비활성화 시 0 |
+| `uwb_calibration_bias_deg` | 해당 장치가 원시 좌표계에서 계산한 영점 편향 |
+| `uwb_calibration_std_deg` | 캘리브레이션 표본의 원형 표준편차 |
 | `uwb_raw_azimuth_deg` | UWB 원시 CW 상대 방위각 |
-| `uwb_ros_azimuth_deg` | ROS CCW로 부호 변환한 UWB 상대각 |
+| `uwb_corrected_azimuth_deg` | 원시값에서 편향을 제거하고 정규화한 상대각 |
+| `uwb_ros_azimuth_deg` | 보정 상대각을 ROS CCW로 부호 변환한 값 |
 | `correction_ros_deg` | deadband와 회당 60도 제한을 적용한 ROS 보정각 |
 | `target_calculated_ros_deg` | 이전 짐벌각과 전체 UWB ROS 상대각으로 계산한 목표 |
 | `gimbal_command_ros_deg` | 제한 후 실제 적용한 ROS 짐벌 명령각 |

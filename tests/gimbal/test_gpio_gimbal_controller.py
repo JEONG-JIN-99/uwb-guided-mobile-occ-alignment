@@ -3,7 +3,7 @@
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -52,6 +52,12 @@ class TestGPIOGimbalController(unittest.TestCase):
 
         self.assertEqual(command, -10.0)
         self.pwm.ChangeDutyCycle.assert_called_with(8.055555555555555)
+
+    def test_move_to_resumes_pwm_after_control_signal_is_disabled(self):
+        self.gimbal.disable_control_signal()
+        self.gimbal.move_to(0.0)
+
+        self.pwm.ChangeDutyCycle.assert_has_calls([call(0), call(7.5)])
 
     def test_coordinate_conversions(self):
         self.assertEqual(self.gimbal.uwb_to_ros_yaw(30.0), -30.0)

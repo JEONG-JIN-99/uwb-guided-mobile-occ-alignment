@@ -2,6 +2,7 @@
 """Chrony 동기 시작으로 Rx 짐벌의 UWB 추적과 색상 인식을 반복한다."""
 
 import argparse
+import math
 import queue
 import sys
 import threading
@@ -19,6 +20,7 @@ from experiment.dynamic_tracking.common import (
     ALIGNMENT_PERIOD_NS,
     ALIGNMENT_PERIOD_SEC,
     LatestUwbReceiver,
+    calibration_deadline_monotonic_ns,
     calculate_alignment,
     distance_trajectory,
 )
@@ -44,7 +46,11 @@ RX_FIELDS = (
     "uwb_source",
     "uwb_received_monotonic_ns",
     "uwb_packet_reused",
+    "uwb_calibration_sample_count",
+    "uwb_calibration_bias_deg",
+    "uwb_calibration_std_deg",
     "uwb_raw_azimuth_deg",
+    "uwb_corrected_azimuth_deg",
     "uwb_ros_azimuth_deg",
     "correction_ros_deg",
     "target_calculated_ros_deg",
@@ -98,6 +104,33 @@ def build_parser():
         metavar="EPOCH_SEC",
     )
     parser.add_argument("--device-index", type=int, default=4)
+    parser.add_argument(
+        "--uwb-calibration",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="collect a stationary UWB zero-bias calibration before start",
+    )
+    parser.add_argument(
+        "--uwb-calibration-samples",
+        type=int,
+        default=100,
+    )
+    parser.add_argument(
+        "--uwb-calibration-max-std-deg",
+        type=float,
+        default=5.0,
+    )
+    parser.add_argument(
+        "--uwb-calibration-max-bias-deg",
+        type=float,
+        default=20.0,
+    )
+    parser.add_argument(
+        "--uwb-calibration-margin-sec",
+        type=float,
+        default=1.0,
+        help="finish calibration this many seconds before --start-utc",
+    )
     parser.add_argument("--crop-scale", type=float, default=0.6)
     parser.add_argument(
         "--camera-warmup",
@@ -138,6 +171,26 @@ def validate_args(parser, args):
         parser.error("--crop-scale must be greater than 0 and at most 1")
     if args.camera_warmup < 0:
         parser.error("--camera-warmup must be 0 or greater")
+    if args.uwb_calibration_samples <= 0:
+        parser.error("--uwb-calibration-samples must be greater than 0")
+    if (
+        not math.isfinite(args.uwb_calibration_max_std_deg)
+        or args.uwb_calibration_max_std_deg <= 0
+    ):
+        parser.error("--uwb-calibration-max-std-deg must be greater than 0")
+    if (
+        not math.isfinite(args.uwb_calibration_max_bias_deg)
+        or not 0 < args.uwb_calibration_max_bias_deg <= 180
+    ):
+        parser.error(
+            "--uwb-calibration-max-bias-deg must be greater than 0 "
+            "and at most 180"
+        )
+    if (
+        not math.isfinite(args.uwb_calibration_margin_sec)
+        or args.uwb_calibration_margin_sec < 0
+    ):
+        parser.error("--uwb-calibration-margin-sec must be 0 or greater")
     if args.color_min_area < 0 or args.color_min_component_area < 0:
         parser.error("color area thresholds must be 0 or greater")
     if args.chrony_max_correction_sec <= 0:
@@ -258,6 +311,8 @@ def main(
     result_writer = None
     camera_started = False
     sample_index = 0
+    uwb_bias_deg = 0.0
+    calibration_result = None
 
     try:
         gimbal = GimbalController(
@@ -295,6 +350,31 @@ def main(
         )
         result_writer = RxResultWriter(logger, cv2)
         print(f"[LOG] {logger.csv_path}")
+        if args.uwb_calibration:
+            calibration_deadline_ns = calibration_deadline_monotonic_ns(
+                args.start_utc,
+                args.uwb_calibration_margin_sec,
+            )
+            print(
+                "[CALIBRATION] keep Rx/Tx stationary and facing each other; "
+                f"collecting {args.uwb_calibration_samples} UWB packets"
+            )
+            calibration_result = uwb.calibrate(
+                args.uwb_calibration_samples,
+                calibration_deadline_ns,
+                max_std_deg=args.uwb_calibration_max_std_deg,
+                max_abs_bias_deg=args.uwb_calibration_max_bias_deg,
+            )
+            uwb_bias_deg = calibration_result.bias_deg
+            print(
+                "[CALIBRATION] Rx complete: "
+                f"samples={calibration_result.sample_count}, "
+                f"bias={uwb_bias_deg:.3f} deg, "
+                f"circular_std="
+                f"{calibration_result.circular_std_deg:.3f} deg"
+            )
+        else:
+            print("[CALIBRATION] Rx UWB calibration disabled; bias=0 deg")
         print(
             f"[WAIT] shared UTC start={format_utc_epoch_ns(args.start_utc)}"
         )
@@ -324,6 +404,17 @@ def main(
                     "scheduled_elapsed_s": (
                         sample_index * ALIGNMENT_PERIOD_SEC
                     ),
+                    "uwb_calibration_sample_count": (
+                        calibration_result.sample_count
+                        if calibration_result is not None
+                        else 0
+                    ),
+                    "uwb_calibration_bias_deg": uwb_bias_deg,
+                    "uwb_calibration_std_deg": (
+                        calibration_result.circular_std_deg
+                        if calibration_result is not None
+                        else ""
+                    ),
                     "target_color": args.target_color,
                     "color_visible": "",
                     "color_success": 0,
@@ -343,6 +434,7 @@ def main(
                     alignment = calculate_alignment(
                         previous_deg,
                         uwb_sample.raw_azimuth_deg,
+                        uwb_bias_deg,
                     )
                     baseline = scanner.get_latest_frame()
                     baseline_frame_id = (
@@ -368,6 +460,9 @@ def main(
                             ),
                             "uwb_raw_azimuth_deg": (
                                 uwb_sample.raw_azimuth_deg
+                            ),
+                            "uwb_corrected_azimuth_deg": (
+                                alignment.uwb_corrected_azimuth_deg
                             ),
                             "uwb_ros_azimuth_deg": (
                                 alignment.uwb_ros_azimuth_deg

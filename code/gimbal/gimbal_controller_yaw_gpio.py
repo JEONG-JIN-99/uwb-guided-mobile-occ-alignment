@@ -73,7 +73,7 @@ class GPIOGimbalController:
         return target_pos[1]
 
     def move_to(self, az_degree):
-        """ROS yaw를 -90~90도로 제한하고 해당 PWM duty를 적용한다."""
+        """ROS yaw를 제한해 PWM duty를 적용하고 꺼진 제어 신호를 재개한다."""
         gimbal_command_deg = max(-90.0, min(90.0, float(az_degree)))
         target_degree = self.ros_yaw_to_servo_angle(gimbal_command_deg)
         duty = (target_degree / 18.0) + 2.5
