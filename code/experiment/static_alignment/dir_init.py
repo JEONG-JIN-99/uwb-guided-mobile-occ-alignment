@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""정적 정렬 실험 전에 짐벌과 카메라 중심을 수동으로 맞춘다."""
+"""정적 정렬 실험 전에 Rx 짐벌과 카메라 중심을 수동으로 맞춘다.
+
+새 명령 이름은 ``rx_dir_init.py``이며 이 파일은 기존 실행 호환성을 위해
+유지한다.
+"""
 
 import argparse
 import sys
@@ -17,8 +21,8 @@ if str(CODE_DIR) not in sys.path:
 def build_parser():
     parser = argparse.ArgumentParser(
         description=(
-            "Move the yaw gimbal to 0 degrees and optionally show the camera "
-            "view with a center marker for static-alignment setup."
+            "Move the Rx yaw gimbal to 0 degrees and optionally show the "
+            "camera view with a center marker for static-alignment setup."
         )
     )
     parser.add_argument("--device-index", type=int, default=4)
@@ -111,7 +115,7 @@ def main(argv=None):
             )
         raise
 
-    window_name = "Static Alignment Setup - Gimbal 0 deg"
+    window_name = "Static Alignment Setup - Rx Gimbal 0 deg"
     cv2 = None
     gimbal = None
     camera = None
@@ -123,12 +127,12 @@ def main(argv=None):
         )
         gimbal.move_to(0.0)
         print(
-            f"[GIMBAL] Moving to 0 deg; waiting "
+            f"[RX GIMBAL] Moving to 0 deg; waiting "
             f"{args.stabilization_time:g}s for stabilization."
         )
         time.sleep(args.stabilization_time)
         gimbal.disable_control_signal()
-        print("[GIMBAL] Aligned to 0 deg; PWM control signal is off.")
+        print("[RX GIMBAL] Aligned to 0 deg; PWM control signal is off.")
 
         if not args.live_stream:
             print("[COMPLETE] Headless gimbal alignment complete.")

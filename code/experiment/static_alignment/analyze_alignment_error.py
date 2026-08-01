@@ -102,6 +102,12 @@ def read_error_rows(csv_path, reference_deg):
                     "uwb_raw_azimuth_deg": source.get(
                         "uwb_raw_azimuth_deg", ""
                     ),
+                    "uwb_calibration_offset_deg": source.get(
+                        "uwb_calibration_offset_deg", ""
+                    ),
+                    "uwb_corrected_azimuth_deg": source.get(
+                        "uwb_corrected_azimuth_deg", ""
+                    ),
                     "gimbal_command_ros_deg": command,
                     "reference_tx_ros_deg": float(reference_deg),
                     "signed_alignment_error_deg": error,

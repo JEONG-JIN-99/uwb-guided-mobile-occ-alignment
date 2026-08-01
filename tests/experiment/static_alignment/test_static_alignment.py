@@ -1,5 +1,7 @@
+import random
 import sys
 import unittest
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,8 +13,12 @@ if str(CODE_DIR) not in sys.path:
 
 from experiment.static_alignment.static_alignment_test import (
     RESULT_FIELDS,
+    build_initial_angle_schedule,
     build_parser,
+    circular_mean_deg,
+    circular_std_deg,
     clamp_servo_command,
+    correct_uwb_azimuth,
     estimate_tx_azimuth,
     normalize_angle,
     parse_uwb_packet,
@@ -26,6 +32,60 @@ class StaticAlignmentTests(unittest.TestCase):
         self.assertEqual(normalize_angle(180), -180)
         self.assertEqual(normalize_angle(-181), 179)
         self.assertAlmostEqual(estimate_tx_azimuth(-20, -41.3), 21.3)
+        self.assertAlmostEqual(correct_uwb_azimuth(20.0, 4.0), 16.0)
+        self.assertAlmostEqual(correct_uwb_azimuth(-179.0, 4.0), 177.0)
+
+    def test_circular_calibration_statistics_cross_wrap_boundary(self):
+        angles = [179.0, -179.0]
+
+        self.assertAlmostEqual(abs(circular_mean_deg(angles)), 180.0)
+        self.assertLess(circular_std_deg(angles), 2.0)
+
+    def test_stratified_initial_angles_balance_bins_and_signs(self):
+        schedule = build_initial_angle_schedule(
+            random.Random(20260721),
+            attempts=100,
+            sampling_mode="stratified-absolute",
+            initial_min=-50,
+            initial_max=50,
+        )
+
+        self.assertEqual(len(schedule), 100)
+        self.assertEqual(
+            Counter(sample["abs_bin"] for sample in schedule),
+            {
+                "0-10": 20,
+                "10-20": 20,
+                "20-30": 20,
+                "30-40": 20,
+                "40-50": 20,
+            },
+        )
+        for label in ("0-10", "10-20", "20-30", "30-40", "40-50"):
+            signs = Counter(
+                sample["sign"]
+                for sample in schedule
+                if sample["abs_bin"] == label
+            )
+            self.assertEqual(signs, {"negative": 10, "positive": 10})
+
+        for sample in schedule:
+            absolute = abs(sample["angle_deg"])
+            lower, upper = map(int, sample["abs_bin"].split("-"))
+            self.assertGreaterEqual(absolute, lower)
+            if upper == 50:
+                self.assertLessEqual(absolute, upper)
+            else:
+                self.assertLess(absolute, upper)
+
+        repeated = build_initial_angle_schedule(
+            random.Random(20260721),
+            attempts=100,
+            sampling_mode="stratified-absolute",
+            initial_min=-50,
+            initial_max=50,
+        )
+        self.assertEqual(schedule, repeated)
 
     def test_servo_clipping(self):
         self.assertEqual(
@@ -63,6 +123,8 @@ class StaticAlignmentTests(unittest.TestCase):
         self.assertEqual(args.zero_settle_time, 1.0)
         self.assertEqual(args.initial_settle_time, 1.0)
         self.assertEqual(args.alignment_settle_time, 1.0)
+        self.assertEqual(args.initial_angle_sampling, "stratified-absolute")
+        self.assertEqual(args.uwb_calibration_samples, 100)
         self.assertEqual(args.target_color, "red")
         self.assertEqual(args.color_min_area, 125.0)
         self.assertEqual(args.color_min_component_area, 50.0)
@@ -70,6 +132,13 @@ class StaticAlignmentTests(unittest.TestCase):
         self.assertFalse(hasattr(args, "servo_drive_time"))
         self.assertFalse(hasattr(args, "keep_pwm_active"))
         self.assertIn("target_calculated_ros_deg", RESULT_FIELDS)
+        self.assertIn("initial_abs_angle_deg", RESULT_FIELDS)
+        self.assertIn("initial_abs_angle_bin", RESULT_FIELDS)
+        self.assertIn("initial_angle_sign", RESULT_FIELDS)
+        self.assertIn("uwb_calibration_offset_deg", RESULT_FIELDS)
+        self.assertIn("uwb_corrected_azimuth_deg", RESULT_FIELDS)
+        self.assertIn("uwb_calibration_samples", RESULT_FIELDS)
+        self.assertIn("uwb_calibration_std_deg", RESULT_FIELDS)
         self.assertIn("pre_recognition_settle_time_s", RESULT_FIELDS)
         self.assertIn("crop_scale", RESULT_FIELDS)
         self.assertIn("color_min_area_px", RESULT_FIELDS)

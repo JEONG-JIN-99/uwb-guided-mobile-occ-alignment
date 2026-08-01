@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""무작위 초기각에서 UWB로 정렬한 뒤 제한시간 내 색상 인식률을 측정한다."""
+"""구간 균형 초기각에서 UWB 정렬 후 제한시간 내 색상 인식률을 측정한다."""
 
 import argparse
 import csv
+import json
 import math
 import random
 import socket
+import statistics
 import sys
 import time
 from datetime import datetime
@@ -29,8 +31,15 @@ RESULT_FIELDS = (
     "red_saturation_min",
     "red_value_min",
     "initial_gimbal_ros_deg",
+    "initial_abs_angle_deg",
+    "initial_abs_angle_bin",
+    "initial_angle_sign",
     "uwb_source",
     "uwb_raw_azimuth_deg",
+    "uwb_calibration_offset_deg",
+    "uwb_corrected_azimuth_deg",
+    "uwb_calibration_samples",
+    "uwb_calibration_std_deg",
     "uwb_ros_azimuth_deg",
     "target_calculated_ros_deg",
     "gimbal_command_ros_deg",
@@ -54,16 +63,120 @@ RESULT_FIELDS = (
     "error_message",
 )
 
+UWB_CALIBRATION_CSV = "uwb_offset_calibration.csv"
+UWB_CALIBRATION_SUMMARY = "uwb_offset_calibration_summary.json"
+ABS_ANGLE_BINS = (
+    (0, 10, "0-10"),
+    (10, 20, "10-20"),
+    (20, 30, "20-30"),
+    (30, 40, "30-40"),
+    (40, 50, "40-50"),
+)
+
 
 def normalize_angle(angle_deg):
     """각도를 [-180, 180) 범위로 정규화한다."""
     return (float(angle_deg) + 180.0) % 360.0 - 180.0
 
 
+def angle_sign(angle_deg):
+    if angle_deg < 0:
+        return "negative"
+    if angle_deg > 0:
+        return "positive"
+    return "zero"
+
+
+def build_initial_angle_schedule(
+    random_generator,
+    attempts,
+    sampling_mode,
+    initial_min,
+    initial_max,
+):
+    """실험에 사용할 초기각과 절댓값 구간 목록을 만든다."""
+    if sampling_mode == "uniform-random":
+        return [
+            {
+                "angle_deg": angle,
+                "abs_bin": "uniform-random",
+                "sign": angle_sign(angle),
+            }
+            for angle in (
+                random_generator.randint(initial_min, initial_max)
+                for _ in range(attempts)
+            )
+        ]
+
+    if sampling_mode != "stratified-absolute":
+        raise ValueError(f"unknown initial-angle sampling mode: {sampling_mode}")
+
+    samples_per_bin = attempts // len(ABS_ANGLE_BINS)
+    samples_per_sign = samples_per_bin // 2
+    schedule = []
+    for lower, upper, label in ABS_ANGLE_BINS:
+        # 0도는 부호가 없어 좌우 균형을 깨므로 첫 구간도 1~9도를
+        # 사용한다. 마지막 구간만 50도를 포함한다.
+        magnitude_min = max(1, lower)
+        magnitude_max = upper if upper == 50 else upper - 1
+        for sign_multiplier, sign_label in ((-1, "negative"), (1, "positive")):
+            for _ in range(samples_per_sign):
+                magnitude = random_generator.randint(
+                    magnitude_min,
+                    magnitude_max,
+                )
+                schedule.append(
+                    {
+                        "angle_deg": sign_multiplier * magnitude,
+                        "abs_bin": label,
+                        "sign": sign_label,
+                    }
+                )
+    random_generator.shuffle(schedule)
+    return schedule
+
+
 def estimate_tx_azimuth(initial_gimbal_deg, uwb_relative_azimuth_deg):
     """UWB CW 상대각을 ROS CCW 좌표계의 절대 목표각으로 변환한다."""
     uwb_ros_azimuth_deg = -float(uwb_relative_azimuth_deg)
     return normalize_angle(initial_gimbal_deg + uwb_ros_azimuth_deg)
+
+
+def circular_mean_deg(values):
+    """각도 목록의 원형 평균을 [-180, 180) 범위로 반환한다."""
+    values = [float(value) for value in values]
+    if not values:
+        raise ValueError("at least one angle is required")
+    sine_mean = statistics.fmean(
+        math.sin(math.radians(value)) for value in values
+    )
+    cosine_mean = statistics.fmean(
+        math.cos(math.radians(value)) for value in values
+    )
+    if math.hypot(sine_mean, cosine_mean) < 1e-12:
+        raise ValueError("circular mean is undefined for dispersed angles")
+    return normalize_angle(math.degrees(math.atan2(sine_mean, cosine_mean)))
+
+
+def circular_std_deg(values):
+    """각도 목록의 원형 표준편차를 degree 단위로 반환한다."""
+    values = [float(value) for value in values]
+    if not values:
+        raise ValueError("at least one angle is required")
+    sine_mean = statistics.fmean(
+        math.sin(math.radians(value)) for value in values
+    )
+    cosine_mean = statistics.fmean(
+        math.cos(math.radians(value)) for value in values
+    )
+    resultant_length = min(1.0, math.hypot(sine_mean, cosine_mean))
+    if resultant_length <= 0.0:
+        return math.inf
+    return math.degrees(math.sqrt(-2.0 * math.log(resultant_length)))
+
+def correct_uwb_azimuth(raw_azimuth_deg, calibration_offset_deg):
+    """기준 자세의 CW 오프셋을 원시 UWB 방위각에서 제거한다."""
+    return normalize_angle(raw_azimuth_deg - calibration_offset_deg)
 
 
 def clamp_servo_command(requested_deg, min_deg, max_deg):
@@ -124,6 +237,16 @@ class UwbReceiver:
         finally:
             self.socket.setblocking(False)
 
+    def receive_valid_samples(self, sample_count, timeout_s):
+        """제한시간 안에 요청 개수까지 유효 패킷을 받는다."""
+        samples = []
+        for _ in range(int(sample_count)):
+            sample = self.receive_first_valid(timeout_s)
+            if sample is None:
+                break
+            samples.append(sample)
+        return samples
+
     def close(self):
         self.socket.close()
 
@@ -177,6 +300,15 @@ def build_parser(
         type=int,
         default=100,
         help="number of complete static alignment attempts (default: 100)",
+    )
+    parser.add_argument(
+        "--initial-angle-sampling",
+        choices=("stratified-absolute", "uniform-random"),
+        default="stratified-absolute",
+        help=(
+            "initial-angle sampling: 5 balanced absolute-angle bins or the "
+            "legacy uniform random range (default: stratified-absolute)"
+        ),
     )
     parser.add_argument(
         "--camera-warmup",
@@ -257,6 +389,15 @@ def build_parser(
     parser.add_argument("--uwb-host", default="0.0.0.0")
     parser.add_argument("--uwb-port", type=int, default=5005)
     parser.add_argument("--uwb-timeout", type=float, default=1.0)
+    parser.add_argument(
+        "--uwb-calibration-samples",
+        type=int,
+        default=100,
+        help=(
+            "number of UWB packets used once at gimbal 0 degrees to estimate "
+            "the fixed azimuth offset (default: 100)"
+        ),
+    )
     parser.add_argument("--random-seed", type=int, default=20260721)
     parser.add_argument(
         "--output-dir",
@@ -268,6 +409,14 @@ def build_parser(
 def validate_args(parser, args):
     if args.attempts <= 0:
         parser.error("--attempts must be greater than 0")
+    if (
+        args.initial_angle_sampling == "stratified-absolute"
+        and args.attempts % 10 != 0
+    ):
+        parser.error(
+            "--attempts must be divisible by 10 with "
+            "--initial-angle-sampling stratified-absolute"
+        )
     if args.distance <= 0:
         parser.error("--distance must be greater than 0")
     if args.interval <= 0:
@@ -289,6 +438,8 @@ def validate_args(parser, args):
         )
     if args.uwb_timeout <= 0:
         parser.error("--uwb-timeout must be greater than 0")
+    if args.uwb_calibration_samples <= 0:
+        parser.error("--uwb-calibration-samples must be greater than 0")
     if not 0 < args.crop_scale <= 1:
         parser.error("--crop-scale must be greater than 0 and at most 1")
     if args.initial_min < -90 or args.initial_max > 90:
@@ -303,6 +454,58 @@ def validate_args(parser, args):
 
 def iso_now():
     return datetime.now().astimezone().isoformat(timespec="milliseconds")
+
+
+def write_uwb_calibration(
+    run_dir,
+    samples,
+    requested_count,
+    offset_deg=None,
+    circular_std=None,
+):
+    """캘리브레이션 원본과 요약값을 실행 폴더에 저장한다."""
+    csv_path = run_dir / UWB_CALIBRATION_CSV
+    fieldnames = (
+        "sample_index",
+        "distance",
+        "raw_azimuth_deg",
+        "elevation_deg",
+        "received_monotonic_ns",
+        "source",
+    )
+    with csv_path.open("w", newline="", encoding="utf-8") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        for index, (parsed, received_ns, address) in enumerate(samples, start=1):
+            distance, azimuth, elevation = parsed
+            writer.writerow(
+                {
+                    "sample_index": index,
+                    "distance": distance,
+                    "raw_azimuth_deg": azimuth,
+                    "elevation_deg": elevation,
+                    "received_monotonic_ns": received_ns,
+                    "source": f"{address[0]}:{address[1]}",
+                }
+            )
+
+    complete = len(samples) == requested_count and offset_deg is not None
+    summary = {
+        "status": "success" if complete else "incomplete",
+        "reference_gimbal_ros_deg": 0.0,
+        "reference_tx_relative_deg": 0.0,
+        "samples_requested": requested_count,
+        "samples_received": len(samples),
+        "raw_cw_offset_deg": offset_deg,
+        "raw_azimuth_circular_std_deg": circular_std,
+        "created_at": iso_now(),
+    }
+    summary_path = run_dir / UWB_CALIBRATION_SUMMARY
+    summary_path.write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return csv_path, summary_path
 
 
 def red_detection_csv_metrics(color_result, got_new_frame, target_color):
@@ -452,7 +655,17 @@ def main(
 
     print(f"Attempts: {args.attempts}")
     print(f"Experiment distance: {args.distance:g}m")
-    print(f"Random initial range: {args.initial_min} to {args.initial_max} deg")
+    print(f"Initial-angle sampling: {args.initial_angle_sampling}")
+    if args.initial_angle_sampling == "stratified-absolute":
+        print(
+            "Absolute-angle bins: 0-10, 10-20, 20-30, 30-40, 40-50 "
+            f"deg ({args.attempts // len(ABS_ANGLE_BINS)} attempts each)"
+        )
+    else:
+        print(
+            f"Random initial range: {args.initial_min} to "
+            f"{args.initial_max} deg"
+        )
     print(f"Camera color warmup: {args.camera_warmup:g}s")
     print(
         "Pre-recognition alignment stabilization: "
@@ -460,11 +673,22 @@ def main(
     )
     print(f"Color recognition window: {args.interval:g}s after stabilization")
     print(f"Post-alignment total settle time: {args.alignment_settle_time:g}s")
+    print(
+        "UWB offset calibration samples: "
+        f"{args.uwb_calibration_samples} at gimbal 0 deg"
+    )
     print("Servo PWM: kept active between moves")
     print(f"Results: {results_path}")
 
     run_dir.mkdir(parents=True, exist_ok=True)
     random_generator = random.Random(args.random_seed)
+    initial_angle_schedule = build_initial_angle_schedule(
+        random_generator,
+        args.attempts,
+        args.initial_angle_sampling,
+        args.initial_min,
+        args.initial_max,
+    )
     gimbal = None
     uwb = None
     scanner = None
@@ -492,6 +716,65 @@ def main(
         )
         if not scanner.start_capture(warmup_sec=args.camera_warmup):
             raise RuntimeError(f"failed to open /dev/video{args.device_index}")
+
+        print(
+            "Calibrating UWB offset: keep the Tx exactly on the gimbal/camera "
+            "0 deg forward axis."
+        )
+        gimbal.move_to(0.0)
+        if show_live_during_wait(
+            cv2,
+            scanner,
+            args.zero_settle_time,
+            window_name,
+        ):
+            raise KeyboardInterrupt
+        uwb.discard_pending()
+        calibration_samples = uwb.receive_valid_samples(
+            args.uwb_calibration_samples,
+            args.uwb_timeout,
+        )
+        if len(calibration_samples) != args.uwb_calibration_samples:
+            calibration_csv, _summary_path = write_uwb_calibration(
+                run_dir,
+                calibration_samples,
+                args.uwb_calibration_samples,
+            )
+            raise RuntimeError(
+                "UWB offset calibration timed out: received "
+                f"{len(calibration_samples)}/{args.uwb_calibration_samples} "
+                f"packets; partial samples saved to {calibration_csv}"
+            )
+        calibration_azimuths = [
+            parsed[1] for parsed, _received_ns, _address in calibration_samples
+        ]
+        try:
+            uwb_calibration_offset = circular_mean_deg(calibration_azimuths)
+            uwb_calibration_std = circular_std_deg(calibration_azimuths)
+        except ValueError as exc:
+            calibration_csv, _summary_path = write_uwb_calibration(
+                run_dir,
+                calibration_samples,
+                args.uwb_calibration_samples,
+            )
+            raise RuntimeError(
+                "UWB offset calibration angles are too dispersed to "
+                f"estimate an offset; samples saved to {calibration_csv}"
+            ) from exc
+        calibration_csv, calibration_summary = write_uwb_calibration(
+            run_dir,
+            calibration_samples,
+            args.uwb_calibration_samples,
+            uwb_calibration_offset,
+            uwb_calibration_std,
+        )
+        print(
+            f"UWB calibration complete: offset={uwb_calibration_offset:+.2f} "
+            f"deg CW, circular_std={uwb_calibration_std:.2f} deg, "
+            f"n={len(calibration_samples)}"
+        )
+        print(f"Calibration samples: {calibration_csv}")
+        print(f"Calibration summary: {calibration_summary}")
 
         with results_path.open("w", newline="", encoding="utf-8") as result_file:
             writer = csv.DictWriter(result_file, fieldnames=RESULT_FIELDS)
@@ -524,6 +807,9 @@ def main(
                             else ""
                         ),
                         "target_color": args.target_color,
+                        "uwb_calibration_offset_deg": uwb_calibration_offset,
+                        "uwb_calibration_samples": len(calibration_samples),
+                        "uwb_calibration_std_deg": uwb_calibration_std,
                         # 실제 새 프레임을 판정하기 전에는 미검출(0)이 아니라
                         # 판정하지 않음(빈 값)으로 구분한다.
                         "color_visible": "",
@@ -533,10 +819,12 @@ def main(
                         "started_at": iso_now(),
                     }
                 )
-                initial_deg = random_generator.randint(
-                    args.initial_min, args.initial_max
-                )
+                initial_sample = initial_angle_schedule[attempt - 1]
+                initial_deg = initial_sample["angle_deg"]
                 row["initial_gimbal_ros_deg"] = initial_deg
+                row["initial_abs_angle_deg"] = abs(initial_deg)
+                row["initial_abs_angle_bin"] = initial_sample["abs_bin"]
+                row["initial_angle_sign"] = initial_sample["sign"]
 
                 try:
                     print(f"[{attempt:03d}/{args.attempts}] zero -> {initial_deg} deg")
@@ -571,11 +859,15 @@ def main(
                             _received_ns,
                             address,
                         ) = uwb_result
+                        corrected_azimuth = correct_uwb_azimuth(
+                            raw_azimuth,
+                            uwb_calibration_offset,
+                        )
                         target_calculated = estimate_tx_azimuth(
                             initial_deg,
-                            raw_azimuth,
+                            corrected_azimuth,
                         )
-                        ros_azimuth = -raw_azimuth
+                        ros_azimuth = normalize_angle(-corrected_azimuth)
                         command, clipped = clamp_servo_command(
                             target_calculated,
                             -90.0,
@@ -585,6 +877,7 @@ def main(
                             {
                                 "uwb_source": f"{address[0]}:{address[1]}",
                                 "uwb_raw_azimuth_deg": raw_azimuth,
+                                "uwb_corrected_azimuth_deg": corrected_azimuth,
                                 "uwb_ros_azimuth_deg": ros_azimuth,
                                 "target_calculated_ros_deg": target_calculated,
                                 "gimbal_command_ros_deg": command,
@@ -711,6 +1004,8 @@ def main(
 
                         print(
                             f"  UWB raw={raw_azimuth:.2f} deg, "
+                            f"offset={uwb_calibration_offset:+.2f} deg, "
+                            f"corrected={corrected_azimuth:.2f} deg, "
                             f"UWB ROS={ros_azimuth:.2f} deg, "
                             f"target={target_calculated:.2f} deg, "
                             f"command={command:.2f} deg, "

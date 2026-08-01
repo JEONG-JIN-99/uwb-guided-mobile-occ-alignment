@@ -1,6 +1,6 @@
 # Static Alignment Color Test
 
-`static_alignment_test.py`는 짐벌을 무작위 초기각으로 이동한 뒤 UWB 상대
+`static_alignment_test.py`는 짐벌을 구간 균형 초기각으로 이동한 뒤 UWB 상대
 방위각으로 송신기 방향을 계산하고, 정렬 명령 시점부터 제한시간 안에 선택한
 색상이 인식되는지 측정하는 하드웨어 실험 코드다. QR은 사용하지 않는다.
 
@@ -12,12 +12,13 @@
 
 정적 정렬 본 실험 전에는 다음 순서로 준비한다.
 
-1. `dir_init.py`로 짐벌 0도와 카메라 중앙을 맞춘다.
-2. `red_detection_precheck.py`로 같은 카메라 조건에서 빨간색 인식 성능을
+1. Rx 장치에서 `rx_dir_init.py`로 PCA9685 짐벌 0도와 카메라 중앙을 맞춘다.
+2. Tx 장치에서 `tx_dir_init.py`로 GPIO 짐벌을 0도에 맞춘다.
+3. `red_detection_precheck.py`로 같은 카메라 조건에서 빨간색 인식 성능을
    100회 확인한다.
-3. `static_alignment_test.py`로 정적 정렬 본 실험을 실행한다.
+4. `static_alignment_test.py`로 정적 정렬 본 실험을 실행한다.
 
-정렬 직후가 아니라 짐벌 안정화가 끝난 뒤의 인식률을 측정하려면 3단계에서
+정렬 직후가 아니라 짐벌 안정화가 끝난 뒤의 인식률을 측정하려면 4단계에서
 `static_alignment_after_settle_test.py`를 실행한다.
 
 처음 실행하는 장치에서는 프로젝트 의존성을 먼저 설치한다.
@@ -26,14 +27,14 @@
 python -m pip install -r requirements.txt
 ```
 
-### `dir_init.py`: 짐벌·카메라 중앙 맞춤
+### `rx_dir_init.py`: Rx 짐벌·카메라 중앙 맞춤
 
 이 스크립트는 색상 인식 성능을 측정하는 코드가 아니다. 본 실험 전에 Rx
 짐벌을 ROS yaw 0도로 이동하고, 카메라의 영상 중심과 실험 표식의 물리적
 중심을 맞추기 위한 수동 준비 도구다.
 
 ```bash
-python code/experiment/static_alignment/dir_init.py \
+python code/experiment/static_alignment/rx_dir_init.py \
   --device-index 4 \
   --servo-channel 0 \
   --pca9685-address 0x40 \
@@ -51,6 +52,9 @@ python code/experiment/static_alignment/dir_init.py \
 끈 뒤에는 서보 유지 토크가 사라지므로 중앙 정렬 후 짐벌이 물리적으로
 움직이지 않도록 주의한다.
 
+기존 `dir_init.py`도 같은 Rx 초기 정렬을 실행하지만, 장치 구분이 명확한
+`rx_dir_init.py` 사용을 권장한다.
+
 주요 옵션:
 
 | 옵션 | 기본값 | 의미 |
@@ -64,6 +68,21 @@ python code/experiment/static_alignment/dir_init.py \
 
 `--live-stream`을 사용하면 `q`, `Esc`, `Ctrl+C` 또는 창 닫기로 종료할 수
 있다. 종료할 때 카메라와 PCA9685 자원을 정리한다.
+
+### `tx_dir_init.py`: Tx GPIO 짐벌 0도 정렬
+
+Tx 장치에서 BCM GPIO에 직접 연결된 yaw 서보를 0도로 맞춘다. 기본 핀은
+BCM GPIO 18번이다.
+
+```bash
+python code/experiment/static_alignment/tx_dir_init.py \
+  --yaw-pin 18 \
+  --stabilization-time 3
+```
+
+스크립트는 Tx 짐벌에 ROS yaw 0도를 명령하고 3초간 유지한 뒤 PWM 신호를
+끄고 GPIO 자원을 정리한다. 실제 연결 핀이 다르면 `--yaw-pin`을 변경한다.
+Tx Raspberry Pi에는 `RPi.GPIO`가 설치되어 있어야 한다.
 
 ### `red_detection_precheck.py`: 빨간색 인식 100회 사전 검사
 
@@ -155,29 +174,41 @@ result/red_detection_precheck/
 
 ## 동작 순서
 
-각 시도는 다음 순서로 진행된다.
+실험 시작 시 Tx를 카메라 중심과 짐벌 ROS yaw `0도`의 정면축에 둔다. 장치를
+초기화하고 짐벌을 0도로 안정화한 뒤, 새 UWB 패킷 100개의 원형 평균을 고정
+장착 오프셋으로 계산한다. 이 캘리브레이션은 실행당 한 번만 수행하며, 원본
+패킷과 요약값을 실행 결과 폴더에 저장한다.
+
+전체 실행은 다음 순서로 진행된다.
 
 1. PCA9685 서보 드라이버, UWB UDP 수신기, RealSense 카메라를 초기화한다.
 2. 카메라 자동 노출과 화이트 밸런스를 위해 `--camera-warmup` 동안 기다린다.
 3. 짐벌을 ROS yaw `0도`로 이동하고 `--zero-settle-time` 동안 안정화한다.
-4. `--initial-min`과 `--initial-max` 사이의 무작위 초기각으로 이동하고
-   `--initial-settle-time` 동안 안정화한다.
-5. 이전 UWB 패킷을 버리고 `--uwb-timeout` 안에 도착한 첫 유효 패킷을 받는다.
-6. UWB 원시 CW 상대 방위각을 ROS CCW 상대각으로 바꾸고 목표각을 계산한다.
+4. 이전 패킷을 버리고 새 UWB 패킷을 `--uwb-calibration-samples`개 수집하여
+   고정 오프셋을 계산한다. 기본값은 100개다.
+5. 각 시도의 시작에서 짐벌을 다시 0도로 이동하고 안정화한다.
+6. 절댓값 기준 0–10, 10–20, 20–30, 30–40, 40–50도 구간에서 균형 있게
+   미리 생성하고 섞은 초기각으로 이동한 뒤 `--initial-settle-time` 동안
+   안정화한다. 기본 100회에서는 구간별 20회이며 각 구간은 음수 10회와
+   양수 10회로 구성된다.
+7. 이전 UWB 패킷을 버리고 `--uwb-timeout` 안에 도착한 첫 유효 패킷을 받는다.
+8. 원시 CW 상대 방위각에서 실행 시작 시 계산한 오프셋을 뺀 뒤, ROS CCW
+   상대각으로 바꾸고 목표각을 계산한다.
 
    ```text
-   UWB ROS 상대각 = -UWB 원시 상대 방위각
+   보정 UWB 방위각 = normalize(UWB 원시 방위각 - 캘리브레이션 오프셋)
+   UWB ROS 상대각 = -보정 UWB 방위각
    계산 목표각 = 초기 ROS 짐벌각 + UWB ROS 상대각
    짐벌 명령각 = 계산 목표각을 -90도 이상 +90도 이하로 제한한 값
    ```
 
-7. 짐벌 정렬 명령을 보낸 순간부터 `--interval` 동안 도착하는 새 카메라
+9. 짐벌 정렬 명령을 보낸 순간부터 `--interval` 동안 도착하는 새 카메라
    프레임에서 색상을 찾는다. 기본 제한시간은 0.2초다.
-8. 정렬 명령 후 총 `--alignment-settle-time`이 지날 때까지 나머지 시간을
+10. 정렬 명령 후 총 `--alignment-settle-time`이 지날 때까지 나머지 시간을
    기다린다. 색상 인식에 사용된 시간도 이 안정화 시간에 포함된다.
-9. 결과를 CSV에 기록한다. 실패하면 마지막 프레임을 `failed_frames/`에
+11. 결과를 CSV에 기록한다. 실패하면 마지막 프레임을 `failed_frames/`에
    저장한다.
-10. 짐벌을 0도로 돌리고 다음 시도를 진행한다.
+12. 짐벌을 0도로 돌리고 다음 시도를 진행한다.
 
 실험 도중에는 PCA9685 PWM을 끄지 않는다. 프로그램 종료 시에만 하드웨어
 자원 정리를 위해 짐벌 제어기를 정리한다.
@@ -246,7 +277,8 @@ python code/experiment/static_alignment/static_alignment_after_settle_test.py \
 | 설정 | 옵션 | 기본값 |
 |---|---|---:|
 | 시도 횟수 | `--attempts` | 100 |
-| 무작위 초기각 | `--initial-min`, `--initial-max` | -50도 ~ +50도 |
+| 초기각 표본 방식 | `--initial-angle-sampling` | `stratified-absolute` |
+| 구간 균형 초기각 | 고정 구간 | 절댓값 10도 간격, 구간별 20회 |
 | 색상 인식 제한시간 | `--interval` | 0.2초 |
 | 인식 전 정렬 안정화 | `--pre-recognition-settle-time` | 0초 (`after_settle` 실험은 0.5초) |
 | 카메라 색상 안정화 | `--camera-warmup` | 5초 |
@@ -260,6 +292,8 @@ python code/experiment/static_alignment/static_alignment_after_settle_test.py \
 | PCA9685 주소 | `--pca9685-address` | `0x40` |
 | 서보 채널 | `--servo-channel` | 0 |
 | UWB UDP 포트 | `--uwb-port` | 5005 |
+| UWB 오프셋 캘리브레이션 표본 수 | `--uwb-calibration-samples` | 100 |
+| UWB 패킷별 대기 제한시간 | `--uwb-timeout` | 1초 |
 
 ### 안정화 시간 옵션의 차이
 
@@ -318,6 +352,8 @@ python code/experiment/static_alignment/static_alignment_test.py \
 ```text
 result/static_alignment/
 └── run_YYYYMMDD_HHMMSS/
+    ├── uwb_offset_calibration.csv
+    ├── uwb_offset_calibration_summary.json
     ├── static_alignment_results.csv
     └── failed_frames/
         └── attempt_001_color_not_detected.jpg
@@ -338,9 +374,16 @@ CSV 필드:
 | `color_min_component_area_px` | 최대 연결 색상 영역 최소 면적 설정 |
 | `red_saturation_min`, `red_value_min` | 빨간색 HSV 채도·밝기 하한 |
 | `initial_gimbal_ros_deg` | 초기 짐벌각, ROS CCW 좌표계 |
+| `initial_abs_angle_deg` | 초기 짐벌각의 절댓값 |
+| `initial_abs_angle_bin` | `0-10`부터 `40-50`까지의 절댓값 구간 |
+| `initial_angle_sign` | 초기각의 `negative` 또는 `positive` 부호 |
 | `uwb_source` | UWB 송신 UDP 주소 |
 | `uwb_raw_azimuth_deg` | UWB 원시 CW 상대 방위각 |
-| `uwb_ros_azimuth_deg` | ROS CCW로 변환한 UWB 상대각 |
+| `uwb_calibration_offset_deg` | 실행 시작 시 기준 자세에서 계산한 CW 고정 오프셋 |
+| `uwb_corrected_azimuth_deg` | 원시 방위각에서 고정 오프셋을 제거한 CW 상대 방위각 |
+| `uwb_calibration_samples` | 오프셋 계산에 사용한 패킷 수 |
+| `uwb_calibration_std_deg` | 캘리브레이션 방위각의 원형 표준편차 |
+| `uwb_ros_azimuth_deg` | 보정 방위각을 ROS CCW로 변환한 상대각 |
 | `target_calculated_ros_deg` | 초기각과 UWB 상대각으로 계산한 목표각 |
 | `gimbal_command_ros_deg` | 범위 제한 후 실제 적용한 짐벌 명령각 |
 | `servo_clipped` | 목표각이 서보 범위 때문에 제한됐는지 여부 |
@@ -421,6 +464,7 @@ docs/paper/figures/alignment_accuracy_distance_violin.png
 python code/experiment/static_alignment/static_alignment_test.py \
   --distance 2 \
   --attempts 100 \
+  --initial-angle-sampling stratified-absolute \
   --device-index 4 \
   --crop-scale 0.6 \
   --camera-warmup 5 \
@@ -436,9 +480,14 @@ python code/experiment/static_alignment/static_alignment_test.py \
   --pca9685-address 0x40 \
   --uwb-host 0.0.0.0 \
   --uwb-port 5005 \
+  --uwb-calibration-samples 100 \
   --uwb-timeout 1 \
   --output-dir result/static_alignment
 ```
+
+이전처럼 `--initial-min`과 `--initial-max` 사이에서 완전히 무작위로 뽑으려면
+`--initial-angle-sampling uniform-random`을 지정한다. 구간 균형 방식에서는
+구간별 양수·음수 수를 같게 나눌 수 있도록 `--attempts`가 10의 배수여야 한다.
 
 `--live-stream`을 추가하면 영상을 표시하며, 영상 창에서 `q` 또는 터미널에서
 `Ctrl+C`로 중단할 수 있다.
