@@ -197,10 +197,10 @@ UWB ROS 상대각 = -보정 UWB 원시 상대각
 
 편향은 UWB 원시 좌표계에서 먼저 제거하며 원본 값은 로그에 보존한다.
 0.2초 동안 서보가 이동할 수 있는 범위를 고려해 보정된 원시 상대각에
-1도 deadband와 한 번당 최대 60도 제한을 적용한다. 그다음 실제 명령을
+한 번당 최대 60도 제한을 적용한다. 그다음 실제 명령을
 서보 가동 범위 `-90~90도`로 제한한다.
 
-- `target_calculated_ros_deg`: deadband, 60도 주기 제한 및 서보 범위를
+- `target_calculated_ros_deg`: 60도 주기 제한 및 서보 범위를
   적용하기 전 논리적 목표각
 - `gimbal_command_ros_deg`: 60도 주기 제한과 서보 범위 제한을 적용해 실제로
   보낸 명령각
@@ -438,7 +438,7 @@ result/dynamic_tracking/
 | `uwb_raw_azimuth_deg` | UWB 원시 CW 상대 방위각 |
 | `uwb_corrected_azimuth_deg` | 원시값에서 편향을 제거하고 정규화한 상대각 |
 | `uwb_ros_azimuth_deg` | 보정 상대각을 ROS CCW로 부호 변환한 값 |
-| `correction_ros_deg` | deadband와 회당 60도 제한을 적용한 ROS 보정각 |
+| `correction_ros_deg` | 회당 60도 제한을 적용한 ROS 보정각 |
 | `target_calculated_ros_deg` | 이전 짐벌각과 전체 UWB ROS 상대각으로 계산한 목표 |
 | `gimbal_command_ros_deg` | 제한 후 실제 적용한 ROS 짐벌 명령각 |
 | `servo_clipped` | 최종 요청이 서보 `-90~90도` 범위에서 제한됐는지 여부 |
