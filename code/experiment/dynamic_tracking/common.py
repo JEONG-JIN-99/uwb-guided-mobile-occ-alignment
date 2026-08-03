@@ -10,7 +10,6 @@ import time
 
 ALIGNMENT_PERIOD_SEC = 0.2
 ALIGNMENT_PERIOD_NS = int(ALIGNMENT_PERIOD_SEC * 1_000_000_000)
-UWB_DEADBAND_DEG = 1.0
 MAX_CORRECTION_PER_ALIGNMENT_DEG = 60.0
 
 
@@ -219,13 +218,10 @@ def calculate_alignment(
     uwb_ros = -uwb_corrected
     target_calculated = previous + uwb_ros
 
-    if abs(uwb_corrected) < UWB_DEADBAND_DEG:
-        correction_raw = 0.0
-    else:
-        correction_raw = max(
-            -MAX_CORRECTION_PER_ALIGNMENT_DEG,
-            min(MAX_CORRECTION_PER_ALIGNMENT_DEG, uwb_corrected),
-        )
+    correction_raw = max(
+        -MAX_CORRECTION_PER_ALIGNMENT_DEG,
+        min(MAX_CORRECTION_PER_ALIGNMENT_DEG, uwb_corrected),
+    )
     correction_ros = -correction_raw
     requested = previous + correction_ros
     command = max(-90.0, min(90.0, requested))

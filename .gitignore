@@ -51,6 +51,8 @@ docs/
 # Experiment/runtime outputs
 result/
 *.log
+/*_exp_log_*.csv
+/navigation*_map.png
 
 # Generated plots and captured frames
 tests/*_stats.png

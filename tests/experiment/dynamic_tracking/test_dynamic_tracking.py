@@ -79,10 +79,10 @@ class DynamicTrackingTests(unittest.TestCase):
         self.assertEqual(result.uwb_ros_azimuth_deg, -10)
         self.assertEqual(result.gimbal_command_ros_deg, 10)
 
-    def test_alignment_deadband_uses_corrected_angle(self):
+    def test_alignment_applies_small_corrected_angle(self):
         result = calculate_alignment(20, 3.5, 3.0)
         self.assertEqual(result.uwb_corrected_azimuth_deg, 0.5)
-        self.assertEqual(result.gimbal_command_ros_deg, 20)
+        self.assertEqual(result.gimbal_command_ros_deg, 19.5)
 
     def test_angle_normalization_and_circular_mean_across_wrap(self):
         self.assertEqual(normalize_angle_deg(181), -179)
@@ -165,10 +165,7 @@ class DynamicTrackingTests(unittest.TestCase):
                 max_abs_bias_deg=20.0,
             )
 
-    def test_alignment_deadband_and_per_period_limit(self):
-        deadband = calculate_alignment(20, 0.5)
-        self.assertEqual(deadband.gimbal_command_ros_deg, 20)
-
+    def test_alignment_per_period_limit(self):
         limited = calculate_alignment(20, 100)
         self.assertEqual(limited.target_calculated_ros_deg, -80)
         self.assertEqual(limited.correction_ros_deg, -60)

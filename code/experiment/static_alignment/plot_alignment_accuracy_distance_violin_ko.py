@@ -124,7 +124,11 @@ def select_errors(points, distance_m, condition):
     ]
 
 
-def configure_matplotlib(requested_font_path=None, language="ko"):
+def configure_matplotlib(
+    requested_font_path=None,
+    language="ko",
+    font_scale=1.0,
+):
     os.environ.setdefault(
         "MPLCONFIGDIR",
         str(Path(tempfile.gettempdir()) / "uwb_alignment_matplotlib"),
@@ -160,11 +164,11 @@ def configure_matplotlib(requested_font_path=None, language="ko"):
     plt.rcParams.update(
         {
             "font.family": font_name,
-            "font.size": 20,
-            "axes.labelsize": 22,
-            "legend.fontsize": 18,
-            "xtick.labelsize": 20,
-            "ytick.labelsize": 20,
+            "font.size": 20 * font_scale,
+            "axes.labelsize": 22 * font_scale,
+            "legend.fontsize": 18 * font_scale,
+            "xtick.labelsize": 20 * font_scale,
+            "ytick.labelsize": 20 * font_scale,
             "axes.unicode_minus": False,
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
@@ -183,7 +187,7 @@ def style_violin(parts, color):
         parts[key].set_linewidth(1.5)
 
 
-def plot_figure(plt, points, output_dir, language="ko"):
+def plot_figure(plt, points, output_dir, language="ko", large_font=False):
     figure, axis = plt.subplots(figsize=(12.5, 7.5))
     base_positions = (1, 2, 3)
     condition_labels = (
@@ -237,14 +241,16 @@ def plot_figure(plt, points, output_dir, language="ko"):
         loc="upper right",
     )
     figure.subplots_adjust(
-        left=0.13,
+        left=0.16 if large_font else 0.13,
         right=0.975,
         top=0.96,
-        bottom=0.15,
+        bottom=0.19 if large_font else 0.15,
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_stem = f"{OUTPUT_STEM}_en" if language == "en" else OUTPUT_STEM
+    if large_font:
+        output_stem = f"{output_stem}_large"
     png_path = output_dir / f"{output_stem}.png"
     pdf_path = output_dir / f"{output_stem}.pdf"
     figure.savefig(png_path, dpi=300, facecolor="white")
@@ -280,6 +286,11 @@ def build_parser():
         default="ko",
         help="그림 언어. en을 선택하면 파일명에 _en을 붙입니다.",
     )
+    parser.add_argument(
+        "--large-font",
+        action="store_true",
+        help="모든 글자를 1.5배로 키우고 파일명에 _large를 붙입니다.",
+    )
     return parser
 
 
@@ -300,12 +311,17 @@ def main(argv=None):
             f"전체 유효 데이터가 {len(points)}개입니다. 예상값은 600개입니다."
         )
 
-    plt = configure_matplotlib(args.font_path, language=args.language)
+    plt = configure_matplotlib(
+        args.font_path,
+        language=args.language,
+        font_scale=1.5 if args.large_font else 1.0,
+    )
     png_path, pdf_path = plot_figure(
         plt,
         points,
         args.output_dir.resolve(),
         language=args.language,
+        large_font=args.large_font,
     )
     print(f"PNG 저장: {png_path}")
     print(f"PDF 저장: {pdf_path}")

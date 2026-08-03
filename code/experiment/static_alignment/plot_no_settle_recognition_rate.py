@@ -144,7 +144,11 @@ def calculate_rates(groups, conditional_on_frame):
     return rates
 
 
-def configure_matplotlib(requested_font_path=None, language="ko"):
+def configure_matplotlib(
+    requested_font_path=None,
+    language="ko",
+    font_scale=1.0,
+):
     os.environ.setdefault(
         "MPLCONFIGDIR",
         str(Path(tempfile.gettempdir()) / "uwb_alignment_matplotlib"),
@@ -180,10 +184,10 @@ def configure_matplotlib(requested_font_path=None, language="ko"):
     plt.rcParams.update(
         {
             "font.family": font_name,
-            "font.size": 19,
-            "axes.titlesize": 24,
-            "axes.labelsize": 22,
-            "legend.fontsize": 18,
+            "font.size": 19 * font_scale,
+            "axes.titlesize": 24 * font_scale,
+            "axes.labelsize": 22 * font_scale,
+            "legend.fontsize": 18 * font_scale,
             "axes.unicode_minus": False,
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
@@ -213,77 +217,69 @@ def add_rate_series(axis, distance_m, rates):
     )
 
 
-def plot_figure(plt, grouped_trials, output_dir, language="ko"):
-    figure, axes = plt.subplots(
-        1,
-        2,
-        figsize=(15.5, 7.2),
-        sharex=True,
-        sharey=True,
-    )
-    panel_specs = (
-        (
-            "(a) Overall recognition rate"
-            if language == "en"
-            else "(가) 전체 인식률",
-            False,
-        ),
-        (
-            "(b) Frame-conditional recognition rate"
-            if language == "en"
-            else "(나) 프레임 조건부 인식률",
-            True,
-        ),
-    )
+def plot_figure(
+    plt,
+    grouped_trials,
+    output_dir,
+    language="ko",
+    wide=False,
+    large_font=False,
+):
+    figure, axis = plt.subplots(figsize=(12.5, 7.5) if wide else (8.0, 7.2))
     tick_labels = [
         f"{lower}–{upper}"
         for lower, upper in zip(BIN_EDGES, BIN_EDGES[1:])
     ]
 
-    for axis, (title, conditional_on_frame) in zip(axes, panel_specs):
-        for distance_m in (1, 2, 3):
-            rates = calculate_rates(
-                grouped_trials[distance_m],
-                conditional_on_frame=conditional_on_frame,
-            )
-            add_rate_series(axis, distance_m, rates)
-
-        axis.set_title(title, pad=10)
-        axis.set_xlabel(
-            (
-                "Absolute initial-angle bin (°)"
-                if language == "en"
-                else "절대 초기각 구간 (°)"
-            )
+    for distance_m in (1, 2, 3):
+        rates = calculate_rates(
+            grouped_trials[distance_m],
+            conditional_on_frame=True,
         )
-        axis.set_xticks(range(len(tick_labels)), tick_labels)
-        axis.set_xlim(-0.35, len(tick_labels) - 0.65)
-        axis.set_ylim(-8, 113)
-        axis.set_yticks(range(0, 101, 20))
-        axis.grid(axis="y", color="#B8B8B8", linewidth=0.7, alpha=0.55)
-        axis.spines["top"].set_visible(False)
-        axis.spines["right"].set_visible(False)
+        add_rate_series(axis, distance_m, rates)
 
-    axes[0].set_ylabel(
+    axis.set_xlabel(
+        (
+            "Absolute initial-angle bin (°)"
+            if language == "en"
+            else "절대 초기각 구간 (°)"
+        )
+    )
+    axis.set_ylabel(
         "Recognition rate (%)" if language == "en" else "인식률 (%)"
     )
-    axes[1].legend(
+    axis.set_xticks(range(len(tick_labels)), tick_labels)
+    if large_font:
+        axis.tick_params(axis="x", labelsize=25)
+    axis.set_xlim(-0.35, len(tick_labels) - 0.65)
+    axis.set_ylim(-8, 113)
+    axis.set_yticks(range(0, 101, 20))
+    axis.grid(axis="y", color="#B8B8B8", linewidth=0.7, alpha=0.55)
+    axis.spines["top"].set_visible(False)
+    axis.spines["right"].set_visible(False)
+    axis.legend(
         title="Distance" if language == "en" else "측정 거리",
         loc="lower left",
         frameon=True,
         framealpha=0.92,
     )
 
-    figure.subplots_adjust(
-        left=0.105,
-        right=0.985,
-        top=0.89,
-        bottom=0.18,
-        wspace=0.10,
-    )
+    if wide:
+        figure.subplots_adjust(
+            left=0.16 if large_font else 0.13,
+            right=0.975,
+            top=0.96,
+            bottom=0.19 if large_font else 0.15,
+        )
+    else:
+        figure.subplots_adjust(left=0.17, right=0.985, top=0.97, bottom=0.18)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     output_stem = f"{OUTPUT_STEM}_en" if language == "en" else OUTPUT_STEM
+    if wide:
+        output_stem = f"{output_stem}_wide"
+    if large_font:
+        output_stem = f"{output_stem}_large"
     png_path = output_dir / f"{output_stem}.png"
     pdf_path = output_dir / f"{output_stem}.pdf"
     figure.savefig(png_path, dpi=300, facecolor="white")
@@ -347,6 +343,19 @@ def build_parser():
         default="ko",
         help="그래프 언어. en을 선택하면 파일명에 _en을 붙입니다.",
     )
+    parser.add_argument(
+        "--wide",
+        action="store_true",
+        help=(
+            "비교용 바이올린 그래프와 같은 5:3 비율(12.5 × 7.5 in)로 "
+            "출력하고 파일명에 _wide를 붙입니다."
+        ),
+    )
+    parser.add_argument(
+        "--large-font",
+        action="store_true",
+        help="모든 글자를 1.5배로 키우고 파일명에 _large를 붙입니다.",
+    )
     return parser
 
 
@@ -359,12 +368,18 @@ def main(argv=None):
         grouped_trials[distance_m] = group_by_absolute_initial_angle(trials)
 
     print_summary(grouped_trials)
-    plt = configure_matplotlib(args.font_path, language=args.language)
+    plt = configure_matplotlib(
+        args.font_path,
+        language=args.language,
+        font_scale=1.5 if args.large_font else 1.0,
+    )
     png_path, pdf_path = plot_figure(
         plt,
         grouped_trials,
         args.output_dir.resolve(),
         language=args.language,
+        wide=args.wide,
+        large_font=args.large_font,
     )
     print(f"PNG 저장: {png_path}")
     print(f"PDF 저장: {pdf_path}")
