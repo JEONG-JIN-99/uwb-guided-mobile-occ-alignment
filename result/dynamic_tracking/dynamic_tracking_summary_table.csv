@@ -1,0 +1,4 @@
+Distance (m),Total cycles,Successful detections,Color not detected,Camera timeouts,UWB unavailable,Other errors,Overall detection rate (%),Conditional detection rate (%),Rx MAE (deg),Tx MAE (deg)
+1,104,102,0,2,0,0,98.0769230769,100,10.4688699394,3.6823738641
+2,88,86,0,2,0,0,97.7272727273,100,6.32472631711,6.90595833598
+3,136,135,0,1,0,0,99.2647058824,100,4.61206672847,3.24954103588

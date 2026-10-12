@@ -1,0 +1,10 @@
+{
+  "status": "success",
+  "reference_gimbal_ros_deg": 0.0,
+  "reference_tx_relative_deg": 0.0,
+  "samples_requested": 100,
+  "samples_received": 100,
+  "raw_cw_offset_deg": 2.9459957044997225,
+  "raw_azimuth_circular_std_deg": 0.7271109344600026,
+  "created_at": "2026-08-01T19:29:43.656+09:00"
+}

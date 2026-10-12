@@ -1,0 +1,4 @@
+Distance (m),Selected experiments,Total cycles,Successful detections,Color not detected,Camera timeouts,UWB unavailable,Other errors,Overall detection rate (%),Conditional detection rate (%),Mean trajectory samples,Common duration (s),Time step (s),Mean Rx MAE (deg),Mean Tx MAE (deg)
+1,1m01;1m02;1m05,243,241,0,2,0,0,99.17695473251028,100.0,68,13.4,0.2,6.543560428069493,1.5958062231259225
+2,2m01;2m03;2m04,294,292,1,1,0,0,99.31972789115646,99.65870307167235,89,17.6,0.2,4.835495148658929,2.796171183912199
+3,3m01;3m02;3m03,411,251,153,7,0,0,61.070559610705594,62.12871287128713,134,26.6,0.2,3.752334940356132,2.5306054451593196

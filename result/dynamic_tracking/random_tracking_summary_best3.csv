@@ -1,0 +1,2 @@
+Selected experiments,Total cycles,Successful detections,Color not detected,Camera timeouts,UWB unavailable,Other errors,Overall detection rate (%),Conditional detection rate (%),Pooled Rx samples,Pooled Rx MAE (deg),Pooled Tx samples,Pooled Tx MAE (deg),Mean trajectory samples,Common duration (s),Time step (s),Mean trajectory Rx MAE (deg),Mean trajectory Tx MAE (deg)
+random01;random03;random05,433,428,0,5,0,0,98.84526558891454,100.0,433,9.867276130955283,433,1.4912792385253872,142,28.200000000000003,0.2,9.77248624251906,0.8135713411091888

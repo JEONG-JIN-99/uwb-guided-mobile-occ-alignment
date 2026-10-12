@@ -1,0 +1,6 @@
+experiment,selected,rank,overall_detection_rate_pct,rx_mae_deg,tx_mae_deg,mean_rx_tx_mae_deg,selection_rule,recognition_source
+random05,1,1,100.0,9.406623606739457,1.113577376753482,5.260100491746469,mean_rx_tx_mae_asc_only,rx.csv automatic status
+random01,1,2,96.57534246575342,9.01658160635107,2.297916540818236,5.657249073584652,mean_rx_tx_mae_asc_only,red_recognition_analysis_table.csv
+random03,1,3,100.0,11.199691264376918,1.048062608877823,6.12387693662737,mean_rx_tx_mae_asc_only,rx.csv automatic status
+random04,0,4,92.3076923076923,9.340635565429224,3.170674794166866,6.255655179798045,mean_rx_tx_mae_asc_only,rx.csv automatic status
+random02,0,5,47.945205479452056,10.000802691084383,5.040167049929384,7.520484870506883,mean_rx_tx_mae_asc_only,rx.csv automatic status

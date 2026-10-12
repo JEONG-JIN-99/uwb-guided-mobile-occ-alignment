@@ -1,0 +1,4 @@
+Analysis Scope,Evaluation Cycles,Detection Success,Color Not Detected,Camera Frame Timeout,UWB Unavailable,Other Errors,Overall System Recognition Rate,Recognition Rate under Normal Conditions
+Entire Interval,146 (100.0%),141 (96.6%),0 (0.0%),5 (3.4%),0 (0.0%),0 (0.0%),96.6%,100.0%
+Alignable Interval,146 (100.0%),141 (96.6%),0 (0.0%),5 (3.4%),0 (0.0%),0 (0.0%),96.6%,100.0%
+Out-of-Range Interval,0 (0.0%),0 (N/A),0 (N/A),0 (N/A),0 (N/A),0 (N/A),N/A,N/A

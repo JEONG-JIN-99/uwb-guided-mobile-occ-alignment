@@ -1,0 +1,11 @@
+﻿Alignment accuracy metric,Result
+Number of alignment commands,79
+Mean signed error (Bias),3.56°
+Mean absolute error (MAE),4.61°
+Root mean square error (RMSE),8.37°
+Median absolute error,1.82°
+90th percentile absolute error,17.41°
+95th percentile absolute error,23.82°
+Maximum absolute error,28.94°
+Absolute error within 5°,64/79 (81.01%)
+Absolute error within 10°,68/79 (86.08%)
